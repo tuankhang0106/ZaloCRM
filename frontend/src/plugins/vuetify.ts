@@ -1,0 +1,101 @@
+import 'vuetify/styles';
+import '@mdi/font/css/materialdesignicons.css';
+import { createVuetify } from 'vuetify';
+import * as components from 'vuetify/components';
+import * as directives from 'vuetify/directives';
+
+export const vuetify = createVuetify({
+  components,
+  directives,
+  theme: {
+    defaultTheme: localStorage.getItem('crm-theme') || 'dark-obsidian',
+    themes: {
+      'emerald-care': {
+        dark: true,
+        colors: {
+          background: '#021a0e',
+          surface: '#042c17',
+          'surface-variant': '#063c20',
+          'surface-light': '#0a542d',
+          primary: '#00B074',
+          secondary: '#044523',
+          accent: '#00B074',
+          error: '#FF5252',
+          warning: '#FFB74D',
+          success: '#00B074',
+          info: '#00B074',
+          'on-background': '#e2ebe7',
+          'on-surface': '#e2ebe7',
+          'on-primary': '#ffffff',
+        },
+      },
+      'dark-obsidian': {
+        dark: true,
+        colors: {
+          background: '#0A192F',
+          surface: '#112240',
+          'surface-variant': '#172A45',
+          'surface-light': '#203756',
+          primary: '#00F2FF',
+          secondary: '#0084FF',
+          accent: '#00F2FF',
+          error: '#FF5252',
+          warning: '#FFB74D',
+          success: '#4CAF50',
+          info: '#00F2FF',
+          'on-background': '#F4F4F5',
+          'on-surface': '#F4F4F5',
+          'on-primary': '#0A192F',
+        },
+      },
+      'dark-charcoal': {
+        dark: true,
+        colors: {
+          background: '#121212',
+          surface: '#1E1E1E',
+          'surface-variant': '#2A2A2A',
+          'surface-light': '#333333',
+          primary: '#8B5CF6',
+          secondary: '#6B7280',
+          accent: '#8B5CF6',
+          error: '#EF4444',
+          warning: '#F59E0B',
+          success: '#10B981',
+          info: '#3B82F6',
+          'on-background': '#F3F4F6',
+          'on-surface': '#F3F4F6',
+          'on-primary': '#FFFFFF',
+        },
+      },
+      'light-apple': {
+        dark: false,
+        colors: {
+          background: '#F4F4F5',
+          surface: '#FFFFFF',
+          'surface-variant': '#E4E4E7',
+          'surface-light': '#D4D4D8',
+          primary: '#09090B',
+          secondary: '#71717A',
+          accent: '#0084FF',
+          error: '#D32F2F',
+          warning: '#F57F17',
+          success: '#2E7D32',
+          info: '#0277BD',
+          'on-background': '#09090B',
+          'on-surface': '#09090B',
+          'on-primary': '#FFFFFF',
+        },
+      },
+    },
+  },
+  defaults: {
+    VBtn: { variant: 'flat', rounded: 'xl' },
+    VTextField: { variant: 'outlined', density: 'compact', rounded: 'xl' },
+    VSelect: { variant: 'outlined', density: 'compact', rounded: 'xl' },
+    VAutocomplete: { variant: 'outlined', density: 'compact', rounded: 'xl' },
+    VTextarea: { variant: 'outlined', density: 'compact', rounded: 'xl' },
+    VCard: { rounded: 'xl', variant: 'flat' },
+    VChip: { rounded: 'lg', size: 'small' },
+    VDialog: { maxWidth: 600 },
+  },
+});

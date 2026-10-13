@@ -1,0 +1,447 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --navy-deep: rgb(var(--v-theme-background));
+  --navy-light: rgb(var(--v-theme-surface));
+  --cyan-electric: rgb(var(--v-theme-primary));
+  --card-glass: rgb(var(--v-theme-surface));
+  --liquid-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --border-glow: rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: 'Plus Jakarta Sans', 'Roboto', sans-serif;
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  height: 100%;
+}
+
+/* Liquid animated background */
+@keyframes flow-bg {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes liquid-morph {
+  0%, 100% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
+  50% { border-radius: 30% 60% 70% 30% / 50% 60% 30% 50%; }
+}
+
+@keyframes fade-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.liquid-bg {
+  background: linear-gradient(-45deg, 
+    rgb(var(--v-theme-background)), 
+    rgb(var(--v-theme-surface)), 
+    var(--theme-gradient-1, rgb(var(--v-theme-background))), 
+    var(--theme-gradient-2, rgb(var(--v-theme-surface)))
+  ) !important;
+  background-size: 400% 400% !important;
+  animation: flow-bg 15s ease infinite;
+}
+
+.green-liquid-bg {
+  background: linear-gradient(-45deg, #021a0e, #042c17, #023015, #00B074) !important;
+  background-size: 400% 400% !important;
+  animation: flow-bg 15s ease infinite;
+}
+
+.ai-core-orb {
+  animation: liquid-morph 8s infinite var(--liquid-ease);
+  box-shadow: 0 0 30px rgba(var(--v-theme-primary), 0.2);
+}
+
+/* Glass card effect - dynamic */
+.v-card {
+  background: rgba(var(--v-theme-surface), 0.7) !important;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+  backdrop-filter: blur(12px);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(var(--v-theme-primary), 0.25); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(var(--v-theme-primary), 0.5); }
+
+.v-theme--light ::-webkit-scrollbar-thumb,
+.v-theme--light-apple ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
+
+/* Sidebar navigation */
+.v-navigation-drawer {
+  background: rgba(var(--v-theme-surface), 0.7) !important;
+  border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+  backdrop-filter: blur(12px);
+}
+
+/* App bar */
+.v-app-bar {
+  background: rgba(var(--v-theme-surface), 0.7) !important;
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+  backdrop-filter: blur(12px);
+}
+
+/* Light mode overrides for cards, drawers, and headers */
+.v-theme--light .v-card,
+.v-theme--light .v-navigation-drawer,
+.v-theme--light .v-app-bar,
+.v-theme--light-apple .v-card,
+.v-theme--light-apple .v-navigation-drawer,
+.v-theme--light-apple .v-app-bar {
+  background: rgb(var(--v-theme-surface)) !important;
+  backdrop-filter: none;
+}
+
+/* List items hover - dynamic glow */
+.v-list-item:hover {
+  background: rgba(var(--v-theme-primary), 0.05) !important;
+}
+
+.v-list-item--active {
+  background: rgba(var(--v-theme-primary), 0.12) !important;
+  color: rgb(var(--v-theme-primary)) !important;
+  font-weight: 600 !important;
+}
+
+.v-list-item--active .v-icon {
+  color: rgb(var(--v-theme-primary)) !important;
+}
+
+.v-theme--light .v-list-item:hover,
+.v-theme--light-apple .v-list-item:hover {
+  background: rgba(10, 25, 47, 0.04) !important;
+}
+
+/* Input fields - pill/rounded style */
+.v-field {
+  border-radius: 16px !important;
+}
+
+.v-field--focused {
+  border-color: rgb(var(--v-theme-primary)) !important;
+  box-shadow: 0 0 12px rgba(var(--v-theme-primary), 0.2);
+}
+
+/* Chat bubbles */
+.message-bubble {
+  animation: fade-slide-up 0.3s var(--liquid-ease);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* Sent messages (staff / self) - right aligned */
+.message-bubble.staff-bubble {
+  border-radius: 18px 18px 4px 18px !important;
+}
+
+.v-theme--emerald-care .message-bubble.staff-bubble {
+  background: linear-gradient(135deg, #00B074, #046A38) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(0, 176, 116, 0.25) !important;
+}
+
+.v-theme--dark-obsidian .message-bubble.staff-bubble {
+  background: linear-gradient(135deg, #0077B6, #023E8A) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25) !important;
+}
+
+.v-theme--dark-charcoal .message-bubble.staff-bubble {
+  background: linear-gradient(135deg, #8B5CF6, #6D28D9) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25) !important;
+}
+
+/* Apple Light Theme - Elegant Light Gray Bubble with Deep Contrast Text */
+.v-theme--light .message-bubble.staff-bubble,
+.v-theme--light-apple .message-bubble.staff-bubble {
+  background: #E4E4E7 !important;
+  color: #09090B !important;
+  border: 1px solid #D4D4D8 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Timestamp inside self bubble */
+.msg-time-self {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.v-theme--light .msg-time-self,
+.v-theme--light-apple .msg-time-self {
+  color: #52525B !important;
+}
+
+/* Received messages (customer / contact) - left aligned */
+.message-bubble.customer-bubble {
+  background: rgba(var(--v-theme-surface-variant), 0.7) !important;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+  border-radius: 18px 18px 18px 4px !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
+}
+
+/* Timestamp inside received bubble */
+.msg-time-contact {
+  color: rgba(var(--v-theme-on-surface), 0.65);
+}
+
+.v-theme--light .message-bubble.customer-bubble,
+.v-theme--light-apple .message-bubble.customer-bubble {
+  background: #FFFFFF !important;
+  border: 1px solid #E4E4E7 !important;
+  color: #09090B !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+}
+
+.v-theme--light .msg-time-contact,
+.v-theme--light-apple .msg-time-contact {
+  color: #52525B !important;
+}
+
+/* Captions inside bubbles for light theme */
+.v-theme--light .chat-image-caption,
+.v-theme--light-apple .chat-image-caption {
+  color: #09090B !important;
+  font-weight: 600 !important;
+}
+
+/* Light mode date divider */
+.v-theme--light .date-divider-chip,
+.v-theme--light-apple .date-divider-chip {
+  background: #FFFFFF !important;
+  border: 1px solid #E4E4E7 !important;
+  color: #3F3F46 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.v-theme--light .date-divider-line,
+.v-theme--light-apple .date-divider-line {
+  background: #E4E4E7 !important;
+}
+
+/* Chat side panels in light mode */
+.v-theme--light .chat-panel-left,
+.v-theme--light-apple .chat-panel-left,
+.v-theme--light .chat-panel-right,
+.v-theme--light-apple .chat-panel-right {
+  background: rgb(var(--v-theme-surface)) !important;
+  backdrop-filter: none;
+}
+
+/* Chat input area - perfectly synchronized with theme surface */
+.chat-input-area {
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+  background: rgb(var(--v-theme-surface)) !important;
+  backdrop-filter: blur(12px);
+}
+
+.v-theme--light .chat-input-area,
+.v-theme--light-apple .chat-input-area {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
+  backdrop-filter: none;
+}
+
+/* Chat messages area background */
+.chat-messages-area {
+  background: rgba(var(--v-theme-background), 0.7) !important;
+}
+
+.v-theme--light .chat-messages-area,
+.v-theme--light-apple .chat-messages-area {
+  background: #F4F4F7 !important;
+}
+
+/* Buttons */
+.v-btn--variant-flat {
+  transition: all 0.3s var(--liquid-ease) !important;
+}
+
+.v-btn--variant-flat:hover {
+  box-shadow: 0 0 16px rgba(var(--v-theme-primary), 0.25);
+  transform: translateY(-1px);
+}
+
+/* Chips */
+.v-chip {
+  border-radius: 12px !important;
+  font-weight: 500;
+}
+
+/* Data table */
+.v-data-table {
+  background: transparent !important;
+}
+
+.v-data-table .v-table__wrapper {
+  background: var(--card-glass);
+  border-radius: 16px;
+  border: 1px solid var(--border-glow);
+}
+
+.v-theme--light .v-data-table .v-table__wrapper,
+.v-theme--light-apple .v-data-table .v-table__wrapper {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* Dialog */
+.v-overlay__content > .v-card {
+  backdrop-filter: blur(20px);
+}
+
+/* Tabs */
+.v-tab--selected {
+  color: rgb(var(--v-theme-primary)) !important;
+}
+
+/* Status dot animation */
+.status-dot {
+  box-shadow: 0 0 10px rgba(var(--v-theme-primary), 0.8);
+}
+
+/* Progress linear */
+.v-progress-linear {
+  background: rgba(var(--v-theme-primary), 0.1) !important;
+}
+
+/* Smooth transitions for everything */
+.v-card, .v-list-item, .v-btn, .v-chip, .v-tab {
+  transition: all 0.3s var(--liquid-ease) !important;
+}
+
+/* Chat container borders */
+.chat-container > * {
+  border-color: var(--border-glow);
+}
+
+.v-theme--light .chat-container > *,
+.v-theme--light-apple .chat-container > * {
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Conversation list active item */
+.conversation-active {
+  background: rgba(var(--v-theme-primary), 0.1) !important;
+  border: 1px solid rgba(var(--v-theme-primary), 0.3) !important;
+}
+
+/* Conversation list sidebar */
+.conversation-list,
+.conversation-list .v-list {
+  background: transparent !important;
+}
+
+/* Chat header area */
+.chat-header {
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+  background: rgb(var(--v-theme-surface)) !important;
+}
+
+/* Light mode & Apple Light text contrast fixes */
+.v-theme--light .text-grey,
+.v-theme--light-apple .text-grey {
+  color: #52525B !important;
+}
+
+.v-theme--light .text-grey-darken-1,
+.v-theme--light-apple .text-grey-darken-1 {
+  color: #3F3F46 !important;
+}
+
+.v-theme--light .text-medium-emphasis,
+.v-theme--light-apple .text-medium-emphasis {
+  color: #52525B !important;
+}
+
+.v-theme--light .v-list-item-subtitle,
+.v-theme--light-apple .v-list-item-subtitle {
+  color: #3F3F46 !important;
+}
+
+/* High-contrast enhancements for Dark Themes (Emerald Care, Obsidian Tech, Charcoal Violet) */
+.v-theme--emerald-care .text-grey,
+.v-theme--dark-obsidian .text-grey,
+.v-theme--dark-charcoal .text-grey {
+  color: #B0B5C0 !important;
+}
+
+.v-theme--emerald-care .text-grey-darken-1,
+.v-theme--dark-obsidian .text-grey-darken-1,
+.v-theme--dark-charcoal .text-grey-darken-1 {
+  color: #9DA3AE !important;
+}
+
+.v-theme--emerald-care .text-medium-emphasis,
+.v-theme--dark-obsidian .text-medium-emphasis,
+.v-theme--dark-charcoal .text-medium-emphasis {
+  color: #D1D5DB !important;
+}
+
+.v-theme--emerald-care .v-list-item-subtitle,
+.v-theme--dark-obsidian .v-list-item-subtitle,
+.v-theme--dark-charcoal .v-list-item-subtitle {
+  color: #9DA3AE !important;
+}
+
+/* Universal text foreground & muted utility classes */
+.text-foreground {
+  color: rgb(var(--v-theme-on-surface)) !important;
+}
+
+.text-muted {
+  color: rgba(var(--v-theme-on-surface), 0.72) !important;
+}
+
+/* Ensure dialog cards have proper bg in light mode */
+.v-theme--light .v-overlay__content > .v-card,
+.v-theme--light-apple .v-overlay__content > .v-card {
+  background: #FFFFFF !important;
+  backdrop-filter: none;
+}
+
+/* Light mode tabs */
+.v-theme--light .v-tab--selected,
+.v-theme--light-apple .v-tab--selected {
+  color: #007AFF !important;
+}
+
+/* Alert styling */
+.v-alert {
+  border-radius: 16px !important;
+}
+
+/* Empty state text */
+.v-theme--light .text-grey-lighten-2,
+.v-theme--light-apple .text-grey-lighten-2 {
+  color: #9CA3AF !important;
+}
+
+.v-theme--emerald-care .text-grey-lighten-2,
+.v-theme--dark-obsidian .text-grey-lighten-2,
+.v-theme--dark-charcoal .text-grey-lighten-2 {
+  color: #CBD5E1 !important;
+}
+
+/* Global image display & sharp rendering guarantees */
+img, .v-img {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+/* Word break and anti-clipping for responsive cards and bubbles */
+.word-break-all {
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+
