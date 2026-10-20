@@ -77,12 +77,45 @@ export async function chatRoutes(app: FastifyInstance) {
   // ── List conversations (paginated) ──────────────────────────────────────
   app.get('/api/v1/conversations', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
-    const { page = '1', limit = '50', search = '', accountId = '', uncompletedOnly = '' } = request.query as QueryParams;
+    const { page = '1', limit = '50', search = '', accountId = '', uncompletedOnly = '', unreadOnly = '', category = '', threadType = '', status = '' } = request.query as QueryParams;
 
     const where: any = { orgId: user.orgId };
     if (accountId) where.zaloAccountId = accountId;
+    if (unreadOnly === 'true') where.unreadCount = { gt: 0 };
+    if (threadType === 'user' || threadType === 'group') where.threadType = threadType;
 
     const contactConditions: any[] = [];
+    if (status) {
+      if (status === 'new') {
+        contactConditions.push({
+          OR: [
+            { status: 'new' },
+            { status: null },
+          ],
+        });
+      } else if (status === 'completed') {
+        contactConditions.push({
+          OR: [
+            { status: 'completed' },
+            { status: 'vip' },
+          ],
+        });
+      } else {
+        contactConditions.push({ status });
+      }
+    }
+    if (category) {
+      if (category === 'KH quan trọng' || category === 'Khách hàng quan trọng') {
+        contactConditions.push({
+          OR: [
+            { tags: { array_contains: ['KH quan trọng'] } },
+            { tags: { array_contains: ['Khách hàng quan trọng'] } },
+          ],
+        });
+      } else {
+        contactConditions.push({ tags: { array_contains: [category] } });
+      }
+    }
     const accountantKeywords = [
       'kế toán',
       'ketoan',
@@ -203,14 +236,14 @@ export async function chatRoutes(app: FastifyInstance) {
         where: { userId: user.id },
         select: { zaloAccountId: true },
       });
-      where.zaloAccountId = { in: accessibleAccounts.map((a) => a.zaloAccountId) };
+      where.zaloAccountId = { in: accessibleAccounts.map((a) => a.zaloAccountId).filter(id => !accountId || id === accountId) };
     }
 
     const [conversations, total] = await Promise.all([
       prisma.conversation.findMany({
         where,
         include: {
-          contact: { select: { id: true, fullName: true, phone: true, avatarUrl: true, zaloUid: true, notes: true, metadata: true } },
+          contact: { select: { id: true, fullName: true, phone: true, avatarUrl: true, zaloUid: true, status: true, notes: true, tags: true, metadata: true } },
           zaloAccount: { select: { id: true, displayName: true, zaloUid: true, status: true } },
           messages: {
             take: 1,
@@ -674,6 +707,368 @@ export async function chatRoutes(app: FastifyInstance) {
     }
   });
 
+  // ── Send Bank Card (VietQR / Zalo Native Bank Card) ──────────────────────
+  app.post('/api/v1/conversations/:id/send-bank-card', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const user = request.user!;
+    const { binBank, numAccBank, nameAccBank, bankName, amount, note } = request.body as {
+      binBank: string;
+      numAccBank: string;
+      nameAccBank?: string;
+      bankName?: string;
+      amount?: number;
+      note?: string;
+    };
+
+    if (!binBank || !numAccBank) {
+      return reply.status(400).send({ error: 'Mã ngân hàng (binBank) và số tài khoản (numAccBank) là bắt buộc' });
+    }
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, orgId: user.orgId },
+      include: { zaloAccount: true },
+    });
+    if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
+
+    const instance = zaloPool.getInstance(conversation.zaloAccountId);
+    if (!instance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
+
+    try {
+      const threadId = conversation.externalThreadId || '';
+      const threadType = conversation.threadType === 'group' ? 1 : 0;
+
+      zaloRateLimiter.recordSend(conversation.zaloAccountId);
+
+      // Call zca-js sendBankCard
+      const res = await instance.api.sendBankCard(
+        {
+          binBank,
+          numAccBank,
+          nameAccBank: nameAccBank ? nameAccBank.toUpperCase() : '',
+        },
+        threadId,
+        threadType
+      );
+
+      const bankDisplayName = bankName || `Ngân hàng (${binBank})`;
+      const cleanName = (nameAccBank || '').toUpperCase();
+      let textContent = `[Thông tin chuyển khoản: ${bankDisplayName} - STK: ${numAccBank}${cleanName ? ` - ${cleanName}` : ''}]`;
+      if (amount && amount > 0) {
+        textContent += ` - Số tiền: ${Number(amount).toLocaleString('vi-VN')} đ`;
+      }
+      if (note) {
+        textContent += ` - Nội dung: ${note}`;
+      }
+
+      const attachments = [
+        {
+          type: 'bank_card',
+          binBank,
+          bankName: bankDisplayName,
+          numAccBank,
+          nameAccBank: cleanName,
+          amount: amount || undefined,
+          note: note || undefined,
+          qrUrl: `https://img.vietqr.io/image/${binBank}-${numAccBank}-compact.png?amount=${amount || 0}&addInfo=${encodeURIComponent(note || '')}&accountName=${encodeURIComponent(cleanName)}`
+        }
+      ];
+
+      const message = await prisma.message.create({
+        data: {
+          id: randomUUID(),
+          conversationId: id,
+          zaloMsgId: (res as any)?.msgId ? String((res as any).msgId) : null,
+          senderType: 'self',
+          senderUid: conversation.zaloAccount.zaloUid || '',
+          senderName: 'Staff',
+          content: textContent,
+          contentType: 'bank_card',
+          attachments,
+          sentAt: new Date(),
+          repliedByUserId: user.id,
+        },
+        include: {
+          repliedBy: { select: { id: true, fullName: true, role: true } },
+        },
+      });
+
+      await prisma.conversation.update({
+        where: { id },
+        data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+      });
+
+      const io = (app as any).io as Server;
+      io?.emit('chat:message', { accountId: conversation.zaloAccountId, message, conversationId: id });
+
+      return message;
+    } catch (err: any) {
+      logger.error('[chat] Send bank card error:', err?.message || err);
+      return reply.status(500).send({ error: err?.message || 'Gửi thẻ ngân hàng thất bại' });
+    }
+  });
+
+  // ── Send Contact Card ────────────────────────────────────────────────────
+  app.post('/api/v1/conversations/:id/send-card', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const user = request.user!;
+    const { contactUserId, phoneNumber, contactName, avatar } = request.body as {
+      contactUserId: string;
+      phoneNumber?: string;
+      contactName?: string;
+      avatar?: string;
+    };
+
+    let targetUserId = contactUserId;
+    let finalName = contactName || 'Danh thiếp Zalo';
+    let finalAvatar = avatar || '';
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, orgId: user.orgId },
+      include: { zaloAccount: true },
+    });
+    if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
+
+    const instance = zaloPool.getInstance(conversation.zaloAccountId);
+    if (!instance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
+
+    if (!targetUserId && phoneNumber) {
+      try {
+        const found = await instance.api.findUser(phoneNumber);
+        if (found?.uid) {
+          targetUserId = found.uid;
+          if (!contactName && found.displayName) finalName = found.displayName;
+          if (!avatar && found.avatar) finalAvatar = found.avatar;
+        }
+      } catch (e) {
+        logger.warn('[chat] Auto findUser by phone failed:', e);
+      }
+    }
+
+    if (!targetUserId) {
+      return reply.status(400).send({ error: 'Vui lòng cung cấp contactUserId hoặc số điện thoại Zalo hợp lệ' });
+    }
+
+    try {
+      const threadId = conversation.externalThreadId || '';
+      const threadType = conversation.threadType === 'group' ? 1 : 0;
+
+      zaloRateLimiter.recordSend(conversation.zaloAccountId);
+
+      const res = await instance.api.sendCard(
+        {
+          userId: targetUserId,
+          phoneNumber: phoneNumber || undefined,
+        },
+        threadId,
+        threadType
+      );
+
+      const cardPayload = {
+        title: finalName,
+        description: phoneNumber || 'Danh thiếp Zalo',
+        thumb: finalAvatar,
+        params: {
+          phone: phoneNumber || '',
+          name: finalName,
+          avatar: finalAvatar,
+          userId: targetUserId,
+        }
+      };
+
+      const message = await prisma.message.create({
+        data: {
+          id: randomUUID(),
+          conversationId: id,
+          zaloMsgId: (res as any)?.msgId ? String((res as any).msgId) : null,
+          senderType: 'self',
+          senderUid: conversation.zaloAccount.zaloUid || '',
+          senderName: 'Staff',
+          content: JSON.stringify(cardPayload),
+          contentType: 'contact_card',
+          attachments: [cardPayload],
+          sentAt: new Date(),
+          repliedByUserId: user.id,
+        },
+        include: {
+          repliedBy: { select: { id: true, fullName: true, role: true } },
+        },
+      });
+
+      await prisma.conversation.update({
+        where: { id },
+        data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+      });
+
+      const io = (app as any).io as Server;
+      io?.emit('chat:message', { accountId: conversation.zaloAccountId, message, conversationId: id });
+
+      return message;
+    } catch (err: any) {
+      logger.error('[chat] Send card error:', err?.message || err);
+      return reply.status(500).send({ error: err?.message || 'Gửi danh thiếp thất bại' });
+    }
+  });
+
+  // ── Create Native Zalo Reminder ──────────────────────────────────────────
+  app.post('/api/v1/conversations/:id/create-zalo-reminder', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const user = request.user!;
+    const { title, startTime, emoji, repeat } = request.body as {
+      title: string;
+      startTime: number;
+      emoji?: string;
+      repeat?: number;
+    };
+
+    if (!title || !startTime) {
+      return reply.status(400).send({ error: 'Tiêu đề và thời gian nhắc hẹn là bắt buộc' });
+    }
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, orgId: user.orgId },
+      include: { zaloAccount: true, contact: true },
+    });
+    if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
+
+    const instance = zaloPool.getInstance(conversation.zaloAccountId);
+    if (!instance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
+
+    try {
+      const threadId = conversation.externalThreadId || '';
+      const threadType = conversation.threadType === 'group' ? 1 : 0;
+
+      zaloRateLimiter.recordSend(conversation.zaloAccountId);
+
+      const res = await instance.api.createReminder(
+        {
+          title,
+          startTime,
+          emoji: emoji || '⏰',
+          repeat: repeat ?? 0,
+        },
+        threadId,
+        threadType
+      );
+
+      const formattedTime = new Date(startTime).toLocaleString('vi-VN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+
+      const reminderData = {
+        title,
+        startTime,
+        formattedTime,
+        emoji: emoji || '⏰',
+        repeat: repeat ?? 0,
+        raw: res,
+      };
+
+      const message = await prisma.message.create({
+        data: {
+          id: randomUUID(),
+          conversationId: id,
+          zaloMsgId: (res as any)?.topicId || (res as any)?.id || null,
+          senderType: 'self',
+          senderUid: conversation.zaloAccount.zaloUid || '',
+          senderName: 'Staff',
+          content: `${emoji || '⏰'} [Nhắc hẹn Zalo] ${title} (${formattedTime})`,
+          contentType: 'reminder',
+          attachments: [reminderData],
+          sentAt: new Date(),
+          repliedByUserId: user.id,
+        },
+        include: {
+          repliedBy: { select: { id: true, fullName: true, role: true } },
+        },
+      });
+
+      // Synchronize appointment to local CRM database as well if contact exists
+      if (conversation.contactId) {
+        try {
+          const dateObj = new Date(startTime);
+          await prisma.appointment.create({
+            data: {
+              orgId: user.orgId,
+              contactId: conversation.contactId,
+              appointmentDate: dateObj,
+              appointmentTime: dateObj.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+              type: 'zalo_reminder',
+              status: 'scheduled',
+              notes: `[Zalo Reminder] ${title}`,
+            }
+          });
+        } catch (e) {
+          logger.warn('[chat] Auto sync CRM appointment failed:', e);
+        }
+      }
+
+      await prisma.conversation.update({
+        where: { id },
+        data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+      });
+
+      const io = (app as any).io as Server;
+      io?.emit('chat:message', { accountId: conversation.zaloAccountId, message, conversationId: id });
+
+      return message;
+    } catch (err: any) {
+      logger.error('[chat] Create Zalo reminder error:', err?.message || err);
+      return reply.status(500).send({ error: err?.message || 'Tạo nhắc hẹn Zalo thất bại' });
+    }
+  });
+
+  // ── Remove Zalo Reminder ──────────────────────────────────────────────────
+  app.post('/api/v1/conversations/:id/reminders/:reminderId/remove', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id, reminderId } = request.params as { id: string; reminderId: string };
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, orgId: user.orgId },
+      include: { zaloAccount: true },
+    });
+    if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
+
+    const instance = zaloPool.getInstance(conversation.zaloAccountId);
+    if (!instance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
+
+    try {
+      const threadId = conversation.externalThreadId || '';
+      const threadType = conversation.threadType === 'group' ? 1 : 0;
+      await instance.api.removeReminder(reminderId, threadId, threadType);
+      return { success: true };
+    } catch (err: any) {
+      logger.error('[chat] Remove Zalo reminder error:', err?.message || err);
+      return reply.status(500).send({ error: err?.message || 'Không thể xóa nhắc hẹn' });
+    }
+  });
+
+  // ── Send Typing Indicator ────────────────────────────────────────────────
+  app.post('/api/v1/conversations/:id/typing', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const user = request.user!;
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, orgId: user.orgId },
+    });
+    if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
+
+    const instance = zaloPool.getInstance(conversation.zaloAccountId);
+    if (!instance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
+
+    try {
+      const threadId = conversation.externalThreadId || '';
+      const threadType = conversation.threadType === 'group' ? 1 : 0;
+      await instance.api.sendTypingEvent(threadId, threadType);
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  });
+
   // ── Forward message to one or more conversations ─────────────────────────
   app.post('/api/v1/conversations/forward', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
@@ -932,6 +1327,88 @@ export async function chatRoutes(app: FastifyInstance) {
     return { success: true, forwardedCount: results.length };
   });
 
+  // ── Update Customer Status & Pinned Note (Lưu ý khách hàng / đơn hàng) ───
+  app.patch('/api/v1/conversations/:id/customer-note', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const { status, note, pinnedNote } = request.body as { status?: string; note?: string; pinnedNote?: string };
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, orgId: user.orgId },
+      include: { contact: true, zaloAccount: true },
+    });
+    if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
+
+    let contactId = conversation.contactId;
+
+    if (!contactId) {
+      const newContact = await prisma.contact.create({
+        data: {
+          orgId: user.orgId,
+          fullName: conversation.threadType === 'group' ? 'Nhóm chat' : 'Khách hàng Zalo',
+          zaloUid: conversation.externalThreadId,
+          status: status || 'new',
+          notes: note !== undefined ? note : (pinnedNote || null),
+          metadata: {
+            pinnedNote: pinnedNote !== undefined ? pinnedNote : (note || null),
+            pinnedNoteUpdatedAt: new Date().toISOString(),
+            pinnedNoteUpdatedBy: (user as any).fullName || user.email,
+          },
+        },
+      });
+      contactId = newContact.id;
+      await prisma.conversation.update({
+        where: { id },
+        data: { contactId: newContact.id },
+      });
+    } else {
+      const currentContact = conversation.contact!;
+      const existingMeta = (typeof currentContact.metadata === 'object' && currentContact.metadata !== null)
+        ? (currentContact.metadata as Record<string, any>)
+        : {};
+
+      const newMeta = { ...existingMeta };
+
+      const finalPinnedNote = pinnedNote !== undefined ? pinnedNote : note;
+      if (finalPinnedNote !== undefined) {
+        newMeta.pinnedNote = finalPinnedNote;
+        newMeta.pinnedNoteUpdatedAt = new Date().toISOString();
+        newMeta.pinnedNoteUpdatedBy = (user as any).fullName || user.email;
+      }
+
+      const updateData: any = {
+        metadata: newMeta,
+      };
+      if (status !== undefined) {
+        updateData.status = status;
+      }
+      if (note !== undefined) {
+        updateData.notes = note;
+      }
+
+      await prisma.contact.update({
+        where: { id: contactId },
+        data: updateData,
+      });
+    }
+
+    const updated = await prisma.conversation.findUnique({
+      where: { id },
+      include: {
+        contact: true,
+        zaloAccount: { select: { id: true, displayName: true, zaloUid: true, status: true } },
+      },
+    });
+
+    const io = (app as any).io as Server;
+    io?.emit('conversation:updated', {
+      conversationId: id,
+      contact: updated?.contact,
+    });
+
+    return { success: true, conversation: updated, contact: updated?.contact };
+  });
+
   // ── Undo / Recall message for everyone (Thu hồi tin nhắn cả 2 phía) ─────
   app.post('/api/v1/conversations/:id/messages/:messageId/undo', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
@@ -949,6 +1426,9 @@ export async function chatRoutes(app: FastifyInstance) {
     if (!message) return reply.status(404).send({ error: 'Message not found' });
 
     const instance = zaloPool.getInstance(conversation.zaloAccountId);
+    let zaloSynced = false;
+    let zaloWarning: string | undefined = undefined;
+
     if (instance?.api && message.zaloMsgId) {
       const threadId = conversation.externalThreadId || '';
       const threadType = conversation.threadType === 'group' ? 1 : 0;
@@ -958,10 +1438,15 @@ export async function chatRoutes(app: FastifyInstance) {
           threadId,
           threadType
         );
+        zaloSynced = true;
         logger.info(`[chat-routes] Undone message ${message.zaloMsgId} on Zalo`);
       } catch (zaloErr: any) {
-        logger.warn(`[chat-routes] Undo on Zalo failed or message expired: ${zaloErr?.message || zaloErr}`);
+        zaloSynced = false;
+        zaloWarning = zaloErr?.message || String(zaloErr);
+        logger.warn(`[chat-routes] Undo on Zalo failed or message expired: ${zaloWarning}`);
       }
+    } else {
+      zaloWarning = 'Tài khoản Zalo chưa kết nối hoặc tin nhắn không có ID Zalo';
     }
 
     const updated = await prisma.message.update({
@@ -978,7 +1463,7 @@ export async function chatRoutes(app: FastifyInstance) {
       zaloMsgId: message.zaloMsgId,
     });
 
-    return { success: true, message: updated };
+    return { success: true, message: updated, zaloSynced, zaloWarning };
   });
 
   // ── Delete message for me only (Xóa chỉ ở phía tôi) ──────────────────────
@@ -1043,6 +1528,52 @@ export async function chatRoutes(app: FastifyInstance) {
       where: { id, orgId: user.orgId },
       data: { unreadCount: 0 },
     });
+
+    return { success: true };
+  });
+
+  // ── Mark conversation as unread ──────────────────────────────────────────
+  app.post('/api/v1/conversations/:id/mark-unread', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+
+    await prisma.conversation.updateMany({
+      where: { id, orgId: user.orgId },
+      data: { unreadCount: 1 },
+    });
+
+    return { success: true };
+  });
+
+  // ── Delete conversation ───────────────────────────────────────────────────
+  app.delete('/api/v1/conversations/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+
+    const conv = await prisma.conversation.findFirst({
+      where: { id, orgId: user.orgId },
+    });
+    if (!conv) {
+      return reply.status(404).send({ error: 'Conversation not found' });
+    }
+
+    // Unlink orders if any
+    await prisma.order.updateMany({
+      where: { conversationId: id },
+      data: { conversationId: null },
+    });
+
+    // Delete messages and conversation
+    await prisma.message.deleteMany({
+      where: { conversationId: id },
+    });
+
+    await prisma.conversation.delete({
+      where: { id },
+    });
+
+    const io = (app as any).io as Server;
+    io?.emit('conversation:deleted', { conversationId: id });
 
     return { success: true };
   });
@@ -1141,16 +1672,25 @@ export async function chatRoutes(app: FastifyInstance) {
       }).join('\n');
 
       const timeRangeText = days > 0 ? `${days} ngày qua` : 'toàn bộ lịch sử';
-      const prompt = `Bạn là một trợ lý CRM chuyên nghiệp. Hãy tóm tắt cuộc trò chuyện Zalo sau đây giữa Nhân viên và Khách hàng trong ${timeRangeText} một cách ngắn gọn, súc tích (khoảng 3-5 gạch đầu dòng).
-Tập trung vào:
-- Nhu cầu chính/vấn đề khách hàng đang quan tâm.
-- Lịch hẹn tái khám hoặc thỏa thuận mua bán (nếu có).
-- Các lưu ý đặc biệt đối với khách hàng này.
-
-Nội dung cuộc trò chuyện:
+      const prompt = `Bạn là một chuyên gia CRM AI phân tích cuộc trò chuyện Zalo giữa Nhân viên và Khách hàng trong ${timeRangeText}.
+Dữ liệu cuộc hội thoại:
 ${chatHistory}
 
-Hãy viết phản hồi bằng tiếng Việt thân thiện, rõ ràng dưới dạng các gạch đầu dòng markdown. Không cần lời mở đầu hoặc kết thúc rườm rà.`;
+Hãy phân tích và trả về DUY NHẤT một chuỗi JSON hợp lệ với cấu trúc sau:
+{
+  "summary": "Tóm tắt 3-4 gạch đầu dòng ngắn gọn, súc tích bằng tiếng Việt về: nhu cầu chính của khách, thỏa thuận mua/bán/dịch vụ, và các lưu ý quan trọng.",
+  "sentiment": "positive" hoặc "neutral" hoặc "hesitant" hoặc "urgent" hoặc "negative",
+  "sentimentLabel": "Chuỗi tiếng Việt mô tả cảm xúc ngắn gọn (ví dụ: 'Tích cực / Hài lòng', 'Đang phân vân', 'Cần hỗ trợ gấp', 'Khiếu nại')",
+  "suggestedStatus": "Một trong các mã trạng thái CRM: 'new' (Mới tiếp cận), 'contacted' (Đang tư vấn), 'processing' (Đang xử lý / Đơn), 'quoted' (Chờ báo giá / Cọc), 'converted' (Đã chốt đơn), 'lost' (Tạm ngưng), 'warning' (Cần lưu ý), 'completed' (Hoàn thành)",
+  "suggestedStatusLabel": "Tên tiếng Việt tương ứng của mã trạng thái gợi ý",
+  "appointment": {
+    "detected": true hoặc false,
+    "title": "Nội dung cuộc hẹn nếu khách hoặc nhân viên có nhắc tới ngày/giờ hẹn cụ thể (hoặc chuỗi rỗng)",
+    "suggestedTime": "Thời gian hẹn được nhắc tới (ví dụ: 'Chiều mai 15:00', 'Thứ 7 ngày 25/10') hoặc chuỗi rỗng",
+    "notes": "Ghi chú thêm về cuộc hẹn nếu có"
+  }
+}
+Lưu ý quan trọng: Chỉ trả về JSON thuần tuý, không thêm lời chào hay giải thích nào bên ngoài.`;
 
       let response;
       let lastError: Error | null = null;
@@ -1181,9 +1721,34 @@ Hãy viết phản hồi bằng tiếng Việt thân thiện, rõ ràng dưới 
       }
 
       const resJson: any = await response.json();
-      const summary = resJson.candidates?.[0]?.content?.parts?.[0]?.text || 'Không thể tạo tóm tắt cuộc hội thoại.';
+      let rawText = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      rawText = rawText.trim();
 
-      return { summary };
+      let result: any = null;
+      try {
+        let cleanJson = rawText;
+        if (cleanJson.startsWith('```json')) {
+          cleanJson = cleanJson.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        } else if (cleanJson.startsWith('```')) {
+          cleanJson = cleanJson.replace(/^```\s*/, '').replace(/\s*```$/, '');
+        }
+        result = JSON.parse(cleanJson);
+      } catch {
+        result = {
+          summary: rawText || 'Không thể tạo tóm tắt cuộc hội thoại.',
+          sentiment: 'neutral',
+          sentimentLabel: 'Bình thường',
+          suggestedStatus: null,
+          suggestedStatusLabel: null,
+          appointment: { detected: false }
+        };
+      }
+
+      if (!result.summary) {
+        result.summary = rawText || 'Không có tóm tắt.';
+      }
+
+      return result;
     } catch (err: any) {
       logger.error('[chat] Summarize error:', err);
       return reply.status(500).send({ error: `Lỗi kết nối Gemini API: ${err.message}` });
@@ -1349,7 +1914,7 @@ Hãy viết phản hồi bằng tiếng Việt thân thiện, rõ ràng dưới 
       prisma.conversation.findMany({
         where,
         include: {
-          contact: { select: { id: true, fullName: true, phone: true, avatarUrl: true, zaloUid: true, notes: true, metadata: true } },
+          contact: { select: { id: true, fullName: true, phone: true, avatarUrl: true, zaloUid: true, status: true, notes: true, metadata: true } },
           zaloAccount: { select: { id: true, displayName: true, zaloUid: true } },
           messages: {
             take: 1,

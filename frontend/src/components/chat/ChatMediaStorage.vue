@@ -24,21 +24,34 @@
         />
       </div>
 
-      <!-- Filter chips: Tất cả / Khách gửi / Tôi gửi -->
-      <div class="d-flex align-center justify-space-between flex-wrap" style="gap: 4px;">
-        <v-btn-toggle
-          v-model="filterSender"
-          density="compact"
-          mandatory
-          variant="outlined"
-          divided
-          color="primary"
-          style="height: 24px;"
-        >
-          <v-btn value="all" size="x-small" class="text-none px-2" style="font-size: 0.65rem;">Tất cả</v-btn>
-          <v-btn value="contact" size="x-small" class="text-none px-2" style="font-size: 0.65rem;">Khách gửi</v-btn>
-          <v-btn value="self" size="x-small" class="text-none px-2" style="font-size: 0.65rem;">Tôi gửi</v-btn>
-        </v-btn-toggle>
+      <!-- Filter chips: Tất cả / Khách gửi / Tôi gửi (rời nhau - Image 2) -->
+      <div class="d-flex align-center justify-space-between flex-wrap" style="gap: 6px;">
+        <div class="d-flex align-center" style="gap: 6px;">
+          <button
+            type="button"
+            class="media-filter-btn"
+            :class="{ active: filterSender === 'all' }"
+            @click="filterSender = 'all'"
+          >
+            Tất cả
+          </button>
+          <button
+            type="button"
+            class="media-filter-btn"
+            :class="{ active: filterSender === 'contact' }"
+            @click="filterSender = 'contact'"
+          >
+            Khách gửi
+          </button>
+          <button
+            type="button"
+            class="media-filter-btn"
+            :class="{ active: filterSender === 'self' }"
+            @click="filterSender = 'self'"
+          >
+            Tôi gửi
+          </button>
+        </div>
 
         <span class="text-caption text-medium-emphasis" style="font-size: 0.65rem;">
           Tổng: {{ totalCount }}
@@ -340,21 +353,28 @@ export interface ExtractedLink {
   sentAt: string | Date;
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   conversationId: string | null;
   contactId: string | null;
   zaloAccountId?: string | null;
-}>();
+  initialTab?: 'images' | 'files' | 'links';
+}>(), {
+  initialTab: 'images'
+});
 
 const emit = defineEmits<{
   'update:counts': [counts: { images: number; files: number; links: number; total: number }];
 }>();
 
 const loading = ref(false);
-const activeSubTab = ref<'images' | 'files' | 'links'>('images');
+const activeSubTab = ref<'images' | 'files' | 'links'>(props.initialTab || 'images');
 const filterSender = ref<'all' | 'contact' | 'self'>('all');
 const searchQuery = ref('');
 const copiedToast = ref(false);
+
+watch(() => props.initialTab, (newTab) => {
+  if (newTab) activeSubTab.value = newTab;
+});
 
 const assets = ref<{
   images: ExtractedMedia[];
@@ -548,6 +568,35 @@ function formatFullTime(d: string | Date | undefined): string {
 <style scoped>
 .chat-media-storage {
   font-size: 0.8rem;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.media-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 23px;
+  padding: 0 10px;
+  border-radius: 12px;
+  font-size: 0.66rem;
+  font-weight: 500;
+  border: 1px solid rgba(var(--v-border-color), 0.28);
+  background: rgba(var(--v-theme-surface), 0.85);
+  color: rgba(var(--v-theme-on-surface), 0.78);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.media-filter-btn:hover {
+  background: rgba(var(--v-theme-primary), 0.08);
+  border-color: rgba(var(--v-theme-primary), 0.35);
+  color: rgb(var(--v-theme-primary));
+}
+.media-filter-btn.active {
+  background: rgba(var(--v-theme-primary), 0.14);
+  border-color: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-primary));
+  font-weight: 700;
 }
 .image-grid {
   display: grid;

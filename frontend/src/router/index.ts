@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
 const routes = [
+  { path: '/handovers', name: 'Handovers', component: () => import('@/views/HandoversView.vue'), meta: { requiresAuth: true } },
   {
     path: '/login',
     name: 'Login',
@@ -58,6 +59,12 @@ const routes = [
     path: '/orders',
     name: 'Orders',
     component: () => import('@/views/OrdersView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/catalog',
+    name: 'Catalog',
+    component: () => import('@/views/CatalogView.vue'),
     meta: { requiresAuth: true },
   },
   {

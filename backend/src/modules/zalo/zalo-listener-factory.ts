@@ -4,6 +4,7 @@
  * Extracted from ZaloAccountPool to keep zalo-pool.ts under 200 lines.
  */
 import type { Server } from 'socket.io';
+import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { handleIncomingMessage, handleMessageUndo } from '../chat/message-handler.js';
 import { detectContentType, updateContactAvatar } from './zalo-message-helpers.js';
@@ -171,6 +172,197 @@ async function processZaloMessage(
 }
 
 /**
+ * Convert Zalo reaction code to Unicode emoji
+ */
+export function reactionCodeToEmoji(code: string | undefined | null): string | null {
+  if (!code) return null;
+  const c = code.trim();
+  switch (c) {
+    case '/-heart':
+    case 'heart':
+    case 'HEART':
+      return '❤️';
+    case '/-strong':
+    case 'like':
+    case 'LIKE':
+      return '👍';
+    case ':>':
+    case 'haha':
+    case 'HAHA':
+      return '😆';
+    case ':o':
+    case ':-o':
+    case 'wow':
+    case 'WOW':
+      return '😮';
+    case ':-(( ':
+    case ':-(':
+    case ':-(((':
+    case 'cry':
+    case 'CRY':
+    case 'sad':
+    case 'SAD':
+      return '😭';
+    case ':-h':
+    case 'angry':
+    case 'ANGRY':
+      return '😡';
+    case '/-weak':
+    case 'dislike':
+    case 'DISLIKE':
+      return '👎';
+    case ':-*':
+      return '😘';
+    case ":')":
+      return '😂';
+    case '/-rose':
+      return '🌹';
+    case '/-break':
+      return '💔';
+    case '_()_':
+      return '🙏';
+    case '/-shit':
+      return '💩';
+    case '/-bd':
+      return '🎂';
+    case '/-ok':
+      return '👌';
+    case '/-v':
+      return '✌️';
+    case '/-thanks':
+      return '🙏';
+    case ';xx':
+      return '🥰';
+    case ';-)':
+      return '😉';
+    case '/-loveu':
+      return '🤟';
+    case ':))':
+      return '😃';
+    case ';-d':
+      return '😄';
+    case 'b-)':
+      return '😎';
+    case 'x-)':
+      return '😏';
+    case '':
+    case 'NONE':
+      return null;
+    default:
+      return c;
+  }
+}
+
+export async function processZaloReaction(ctx: ListenerContext, reactionObject: any): Promise<void> {
+  const { accountId, io, api } = ctx;
+  if (!reactionObject) return;
+
+  const data = reactionObject.data || reactionObject;
+  let content = data.content;
+  if (typeof content === 'string') {
+    try {
+      content = JSON.parse(content);
+    } catch {
+      content = null;
+    }
+  }
+
+  const rMsg = Array.isArray(content?.rMsg) ? content.rMsg : [];
+  if (rMsg.length === 0) return;
+
+  const rawIcon = content?.rIcon ?? '';
+  const emoji = reactionCodeToEmoji(rawIcon);
+  const senderUid = String(data.uidFrom || '');
+  const isSelf = Boolean(
+    reactionObject.isSelf ||
+    data.uidFrom === '0' ||
+    (api.getContext?.()?.uid && senderUid === String(api.getContext().uid))
+  );
+
+  for (const item of rMsg) {
+    const gMsgID = String(item.gMsgID || '');
+    const cMsgID = String(item.cMsgID || '');
+    if (!gMsgID && !cMsgID) continue;
+
+    // Search message in DB for this Zalo account
+    const message = await prisma.message.findFirst({
+      where: {
+        conversation: { zaloAccountId: accountId },
+        OR: [
+          ...(gMsgID ? [{ zaloMsgId: gMsgID }] : []),
+          ...(cMsgID ? [{ zaloMsgId: cMsgID }] : []),
+          ...(gMsgID ? [{ id: gMsgID }] : []),
+        ],
+      },
+      include: {
+        conversation: { select: { id: true, orgId: true } },
+      },
+    });
+
+    if (!message) {
+      logger.debug(`[zalo:${accountId}] Reaction target msg not found in DB (gMsgID=${gMsgID}, cMsgID=${cMsgID})`);
+      continue;
+    }
+
+    // Parse existing attachments
+    let attList: any[] = [];
+    if (message.attachments) {
+      if (typeof message.attachments === 'string') {
+        try { attList = JSON.parse(message.attachments); } catch { attList = []; }
+      } else if (Array.isArray(message.attachments)) {
+        attList = [...message.attachments];
+      } else if (typeof message.attachments === 'object') {
+        attList = [message.attachments];
+      }
+    }
+
+    // Filter out previous reaction from this sender or general reaction
+    attList = attList.filter((att) => {
+      if (!att || typeof att !== 'object') return true;
+      if (att.type === 'reaction') {
+        if (senderUid && att.senderUid) {
+          return att.senderUid !== senderUid;
+        }
+        return false;
+      }
+      return true;
+    });
+
+    if (emoji) {
+      attList.push({
+        type: 'reaction',
+        reaction: emoji,
+        icon: rawIcon,
+        senderUid,
+        isSelf,
+        updatedAt: Date.now(),
+      });
+    }
+
+    await prisma.message.update({
+      where: { id: message.id },
+      data: {
+        attachments: attList as any,
+      },
+    });
+
+    logger.info(`[zalo:${accountId}] Reaction updated on msg ${message.id} (zaloMsgId=${message.zaloMsgId}): ${emoji || 'REMOVED'} by ${senderUid} (isSelf=${isSelf})`);
+
+    // Broadcast real-time event to connected frontend clients
+    io?.emit('chat:reaction', {
+      accountId,
+      messageId: message.id,
+      zaloMsgId: message.zaloMsgId || gMsgID,
+      conversationId: message.conversationId,
+      reaction: emoji, // emoji string or null
+      icon: rawIcon,
+      senderUid,
+      isSelf,
+    });
+  }
+}
+
+/**
  * Attach all zca-js listener events for the given account.
  * Calls listener.start() with retryOnClose: false at the end.
  */
@@ -183,15 +375,19 @@ export function attachZaloListener(ctx: ListenerContext): void {
     io?.emit('zalo:connected', { accountId });
   });
 
-  // Request old messages once cipher handshake is confirmed
+  // Request old messages and reactions once cipher handshake is confirmed
   listener.on('cipher_key', () => {
-    logger.info(`[zalo:${accountId}] Listener cipher key established. Requesting catch-up old messages...`);
+    logger.info(`[zalo:${accountId}] Listener cipher key established. Requesting catch-up old messages and reactions...`);
     setTimeout(() => {
       try {
         listener.requestOldMessages(0); // User threads
         listener.requestOldMessages(1); // Group threads
+        if (typeof listener.requestOldReactions === 'function') {
+          listener.requestOldReactions(0);
+          listener.requestOldReactions(1);
+        }
       } catch (e: any) {
-        logger.warn(`[zalo:${accountId}] Failed to request old messages:`, e.message);
+        logger.warn(`[zalo:${accountId}] Failed to request old messages/reactions:`, e.message);
       }
     }, 500);
   });
@@ -209,6 +405,19 @@ export function attachZaloListener(ctx: ListenerContext): void {
     }
   });
 
+  // Catch-up old reactions
+  listener.on('old_reactions', async (reactionObjects: any[], isGroup: boolean) => {
+    if (!Array.isArray(reactionObjects) || reactionObjects.length === 0) return;
+    logger.info(`[zalo:${accountId}] Catch-up: received ${reactionObjects.length} old reactions (isGroup: ${isGroup})`);
+    for (const r of reactionObjects) {
+      try {
+        await processZaloReaction(ctx, r);
+      } catch (err) {
+        logger.error(`[zalo:${accountId}] Error processing catch-up old reaction:`, err);
+      }
+    }
+  });
+
   listener.on('message', async (message: any) => {
     try {
       const result = await processZaloMessage(ctx, message);
@@ -220,6 +429,15 @@ export function attachZaloListener(ctx: ListenerContext): void {
       }
     } catch (err) {
       logger.error(`[zalo:${accountId}] Message handler error:`, err);
+    }
+  });
+
+  // Real-time reactions from đối phương (or self)
+  listener.on('reaction', async (reactionObject: any) => {
+    try {
+      await processZaloReaction(ctx, reactionObject);
+    } catch (err) {
+      logger.error(`[zalo:${accountId}] Reaction handler error:`, err);
     }
   });
 

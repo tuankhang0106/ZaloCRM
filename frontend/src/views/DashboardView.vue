@@ -1,35 +1,44 @@
 <template>
-  <div>
-    <h1 class="text-h4 mb-4">
-      <v-icon class="mr-2" color="primary">mdi-view-dashboard</v-icon>
-      Dashboard
-    </h1>
+  <div class="dashboard-page">
+    <div class="dashboard-heading">
+      <div>
+        <div class="eyebrow">Không gian kinh doanh</div>
+        <h1>Tổng quan hoạt động</h1>
+        <p>Theo dõi kết nối, khách hàng và hiệu quả kinh doanh của bạn.</p>
+      </div>
+      <div class="dashboard-actions">
+        <v-btn to="/reports" variant="outlined" prepend-icon="mdi-chart-box-outline">Xem báo cáo</v-btn>
+        <v-btn to="/chat" color="primary" prepend-icon="mdi-message-text-outline">Mở hộp thư</v-btn>
+      </div>
+    </div>
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
+    <div class="dashboard-section-title">Chỉ số chăm sóc khách hàng</div>
     <KpiCards :kpi="kpi" class="mb-4" />
 
     <!-- Order KPI cards -->
-    <v-row class="mb-4">
-      <v-col cols="6" sm="3">
+    <v-row class="mb-4 order-summary">
+      <v-col cols="12" sm="6">
         <v-card variant="outlined">
           <v-card-text class="text-center pa-3">
             <v-icon icon="mdi-cart-outline" color="primary" size="28" class="mb-1" />
-            <div class="text-h5 font-weight-bold">{{ orderStats?.totalOrders ?? '—' }}</div>
-            <div class="text-caption text-grey">Đơn hàng mới</div>
+            <div><div class="text-h5 font-weight-bold">{{ orderStats?.totalOrders ?? '—' }}</div>
+            <div class="text-caption text-grey">Đơn hàng mới</div></div>
           </v-card-text>
         </v-card>
       </v-col>
-      <v-col cols="6" sm="3">
+      <v-col cols="12" sm="6">
         <v-card variant="outlined">
           <v-card-text class="text-center pa-3">
             <v-icon icon="mdi-calendar-today" color="orange" size="28" class="mb-1" />
-            <div class="text-h6 font-weight-bold">{{ formatVND(orderStats?.todayRevenue ?? 0) }}</div>
-            <div class="text-caption text-grey">Doanh thu hôm nay</div>
+            <div><div class="text-h6 font-weight-bold">{{ formatVND(orderStats?.todayRevenue ?? 0) }}</div>
+            <div class="text-caption text-grey">Doanh thu hôm nay</div></div>
           </v-card-text>
         </v-card>
       </v-col>
     </v-row>
 
+    <div class="dashboard-section-title">Phân tích hoạt động</div>
     <v-row class="mb-4">
       <v-col cols="12" md="8">
         <MessageVolumeChart :data="messageVolume" />

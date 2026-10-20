@@ -1,58 +1,31 @@
 <template>
   <div class="conversation-list d-flex flex-column" style="width: 100%; border-right: 1px solid var(--border-glow, rgba(0,242,255,0.1)); height: 100%;">
-    <!-- Account filter + Search -->
-    <div class="pa-2">
-      <v-select
-        v-model="selectedAccountId"
-        :items="accountOptions"
-        item-title="text"
-        item-value="value"
-        label="Tất cả Zalo"
-        density="compact"
-        variant="solo-filled"
-        hide-details
-        clearable
-        class="mb-2"
-        @update:model-value="$emit('filter-account', $event)"
-      />
-      <div class="d-flex align-center" style="gap: 8px;">
-        <v-text-field
-          :model-value="search"
-          @update:model-value="$emit('update:search', $event)"
-          placeholder="Tìm kiếm..."
-          prepend-inner-icon="mdi-magnify"
-          variant="solo-filled"
-          density="compact"
-          hide-details
-          clearable
-          class="flex-grow-1"
-        />
-        <v-btn
-          icon="mdi-account-plus"
-          variant="tonal"
-          color="primary"
-          density="comfortable"
-          title="Tìm & kết bạn bằng số điện thoại"
-          @click="openSearchDialogDirect"
-        />
-        <v-btn
-          icon="mdi-account-multiple-plus-outline"
-          variant="tonal"
-          color="primary"
-          density="comfortable"
-          title="Tạo nhóm Zalo mới"
-          @click="openCreateGroupDialog"
-        />
-        <v-btn
-          icon="mdi-sync"
-          variant="tonal"
-          color="primary"
-          density="comfortable"
-          :loading="syncingMessages"
-          title="Đồng bộ tin nhắn mới từ Zalo"
-          @click="syncRecentMessages"
-        />
+    <div class="conversation-account-toolbar">
+      <v-menu location="bottom start">
+        <template #activator="{ props: menuProps }">
+          <v-btn v-bind="menuProps" variant="text" class="conversation-account-name" aria-label="Chọn tài khoản hội thoại" :title="currentAccountName">
+            <span class="text-truncate">{{ currentAccountName }}</span><v-icon size="16" class="ml-1">mdi-chevron-down</v-icon>
+          </v-btn>
+        </template>
+        <v-list density="compact" width="250">
+          <v-list-item title="Tất cả Zalo" :active="!accountId" @click="$emit('filter-account', null)" />
+          <v-list-item v-for="account in accountOptions" :key="account.value" :title="account.text" :active="accountId === account.value" @click="$emit('filter-account', account.value)" />
+        </v-list>
+      </v-menu>
+      <div class="conversation-account-actions">
+        <v-btn icon="mdi-account-plus-outline" variant="text" size="small" color="primary" title="Thêm bạn" aria-label="Thêm bạn" @click="openSearchDialogDirect" />
+        <v-btn icon="mdi-account-multiple-plus-outline" variant="text" size="small" color="primary" title="Tạo nhóm" aria-label="Tạo nhóm" @click="openCreateGroupDialog" />
+        <v-btn icon="mdi-sync" variant="text" size="small" color="primary" title="Đồng bộ" aria-label="Đồng bộ" :loading="syncingMessages" @click="syncRecentMessages" />
       </div>
+    </div>
+    <div class="conversation-search-header">
+      <v-text-field :model-value="search" @update:model-value="$emit('update:search', $event)" placeholder="Tìm kiếm hội thoại..." aria-label="Tìm kiếm hội thoại" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable />
+      <v-tabs :model-value="activeTab" @update:model-value="$emit('change-tab', String($event))" class="conversation-filter-tabs" density="compact" grow color="primary" aria-label="Lọc hội thoại">
+        <v-tab value="all">Tất cả</v-tab>
+        <v-tab value="unread">Chưa đọc</v-tab>
+        <v-tab value="personal">Cá nhân</v-tab>
+        <v-tab value="group">Nhóm</v-tab>
+      </v-tabs>
     </div>
 
     <!-- List -->
@@ -79,12 +52,10 @@
         :key="conv.id"
         :active="conv.id === selectedId"
         @click="$emit('select', conv.id)"
-        class="py-2 animate-fade-in"
+        class="py-2 animate-fade-in conversation-list-item"
         :class="{
           'conversation-active': conv.id === selectedId,
-          'unread-conv-bg': conv.unreadCount > 0 && conv.id !== selectedId && !isUncompletedTask(conv),
-          'bg-red-lighten-5 border-left-red': isUncompletedTask(conv) && conv.id !== selectedId,
-          'border-left-red-active': isUncompletedTask(conv) && conv.id === selectedId
+          'unread-conv-bg': conv.unreadCount > 0 && conv.id !== selectedId,
         }"
       >
         <template #prepend>
@@ -101,15 +72,18 @@
           </span>
           <v-chip v-if="conv.threadType === 'group'" size="x-small" color="info" variant="tonal" class="ml-1">Nhóm</v-chip>
           <v-icon v-if="conv.isCustomer" color="error" size="14" class="ml-1" title="Đang theo dõi nhóm">mdi-bell-ring</v-icon>
+
+          <!-- Pinned conversation icon -->
           <v-icon
-            v-if="isOverdue(conv)"
-            color="error"
-            size="16"
-            class="ml-1 animate-pulse"
-            title="Quá hạn báo giá (>24h)"
+            v-if="isPinned(conv.id)"
+            size="14"
+            color="primary"
+            class="ml-1"
+            title="Đã ghim hội thoại"
           >
-            mdi-alert-circle
+            mdi-pin
           </v-icon>
+
           <!-- Muted notification icon -->
           <v-icon
             v-if="conv.isMuted"
@@ -119,8 +93,6 @@
           >
             mdi-bell-off-outline
           </v-icon>
-          <v-spacer />
-          <span class="text-caption text-grey ml-1">{{ formatTime(conv.lastMessageAt) }}</span>
         </v-list-item-title>
 
         <v-list-item-subtitle class="d-flex align-center">
@@ -138,16 +110,17 @@
           </span>
         </v-list-item-subtitle>
 
-        <!-- Zalo account indicator, Delivery Countdown & Options Menu -->
+        <!-- Delivery Countdown, Time & Options Menu -->
         <template #append>
-          <div class="d-flex flex-column align-end ml-1" style="gap: 4px; min-width: 65px;">
-            <div class="d-flex align-center">
-              <span v-if="conv.zaloAccount?.displayName" class="text-caption text-grey-darken-1" style="font-size: 0.65rem; max-width: 55px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                {{ conv.zaloAccount.displayName }}
-              </span>
+          <div class="conv-append-container d-flex flex-column align-end justify-space-between ml-1">
+            <!-- Time: Luôn ở phía trên, không bao giờ đè lên 3 chấm (Image 2) -->
+            <span class="text-caption text-grey-darken-1 conv-time-label">
+              {{ formatTime(conv.lastMessageAt) }}
+            </span>
 
-              <!-- Action menu: Toggle mute -->
-              <v-menu location="bottom end">
+            <div class="d-flex align-center conv-action-wrapper">
+              <!-- Action menu: Context options matching Zalo (Image 1) -->
+              <v-menu location="bottom end" :close-on-content-click="false">
                 <template #activator="{ props: menuProps }">
                   <v-btn
                     v-bind="menuProps"
@@ -155,18 +128,109 @@
                     size="x-small"
                     variant="text"
                     density="compact"
-                    class="conv-action-menu-btn ml-1"
+                    class="conv-action-menu-btn"
                     title="Tùy chọn hội thoại"
                     @click.stop
                   />
                 </template>
-                <v-list density="compact" rounded="lg" class="elevation-4">
-                  <v-list-item
-                    :prepend-icon="conv.isMuted ? 'mdi-bell-outline' : 'mdi-bell-off-outline'"
-                    :title="conv.isMuted ? 'Bật thông báo' : 'Tắt thông báo'"
-                    :class="conv.isMuted ? 'text-primary' : 'text-medium-emphasis'"
-                    @click.stop="$emit('toggle-mute', conv.id, !conv.isMuted)"
-                  />
+                <v-list density="compact" rounded="lg" class="elevation-8 conv-context-menu pa-1" min-width="190">
+                  <!-- 1. Ghim hội thoại -->
+                  <v-list-item @click.stop="togglePin(conv.id)" class="conv-menu-item rounded">
+                    <v-list-item-title class="text-body-2">
+                      {{ isPinned(conv.id) ? 'Bỏ ghim hội thoại' : 'Ghim hội thoại' }}
+                    </v-list-item-title>
+                  </v-list-item>
+
+                  <!-- 2. Phân loại > -->
+                  <v-menu location="end" open-on-hover :close-on-content-click="false">
+                    <template #activator="{ props: catMenuProps }">
+                      <v-list-item v-bind="catMenuProps" class="conv-menu-item rounded d-flex align-center justify-space-between" @click.stop>
+                        <v-list-item-title class="text-body-2">Phân loại</v-list-item-title>
+                        <template #append>
+                          <v-icon size="16" class="text-medium-emphasis">mdi-chevron-right</v-icon>
+                        </template>
+                      </v-list-item>
+                    </template>
+                    <v-list density="compact" rounded="lg" class="elevation-8 conv-context-menu pa-1" min-width="210">
+                      <v-list-item
+                        v-for="cat in CONVERSATION_CATEGORIES"
+                        :key="cat.title"
+                        @click.stop="toggleCategory(conv, cat.title)"
+                        class="conv-menu-item rounded"
+                      >
+                        <template #prepend>
+                          <v-icon :icon="cat.icon" :style="{ color: cat.color }" size="16" class="mr-2" />
+                        </template>
+                        <v-list-item-title class="text-body-2" style="font-size: 0.85rem;">{{ cat.title }}</v-list-item-title>
+                        <template #append>
+                          <v-icon
+                            v-if="conv.contact?.tags?.includes(cat.title) || (cat.title === 'KH quan trọng' && conv.contact?.tags?.includes('Khách hàng quan trọng'))"
+                            icon="mdi-check"
+                            size="16"
+                            color="success"
+                          />
+                        </template>
+                      </v-list-item>
+                    </v-list>
+                  </v-menu>
+
+                  <!-- 3. Đánh dấu chưa đọc -->
+                  <v-list-item @click.stop="toggleMarkUnread(conv)" class="conv-menu-item rounded">
+                    <v-list-item-title class="text-body-2">
+                      {{ conv.unreadCount > 0 ? 'Đánh dấu đã đọc' : 'Đánh dấu chưa đọc' }}
+                    </v-list-item-title>
+                  </v-list-item>
+
+                  <!-- 4. Thêm vào nhóm -->
+                  <v-list-item @click.stop="handleAddToGroup(conv)" class="conv-menu-item rounded">
+                    <v-list-item-title class="text-body-2">Thêm vào nhóm</v-list-item-title>
+                  </v-list-item>
+
+                  <!-- 5. Tắt thông báo > -->
+                  <v-menu v-if="!conv.isMuted" location="end" open-on-hover :close-on-content-click="true">
+                    <template #activator="{ props: muteMenuProps }">
+                      <v-list-item v-bind="muteMenuProps" class="conv-menu-item rounded d-flex align-center justify-space-between" @click.stop>
+                        <v-list-item-title class="text-body-2">Tắt thông báo</v-list-item-title>
+                        <template #append>
+                          <v-icon size="16" class="text-medium-emphasis">mdi-chevron-right</v-icon>
+                        </template>
+                      </v-list-item>
+                    </template>
+                    <v-list density="compact" rounded="lg" class="elevation-8 conv-context-menu pa-1" min-width="190">
+                      <v-list-item @click.stop="muteConversation(conv, 60)" class="conv-menu-item rounded">
+                        <v-list-item-title class="text-body-2">Trong 1 giờ</v-list-item-title>
+                      </v-list-item>
+                      <v-list-item @click.stop="muteConversation(conv, 240)" class="conv-menu-item rounded">
+                        <v-list-item-title class="text-body-2">Trong 4 giờ</v-list-item-title>
+                      </v-list-item>
+                      <v-list-item @click.stop="muteConversation(conv, 480)" class="conv-menu-item rounded">
+                        <v-list-item-title class="text-body-2">Trong 8 giờ</v-list-item-title>
+                      </v-list-item>
+                      <v-list-item @click.stop="muteConversation(conv, 0)" class="conv-menu-item rounded">
+                        <v-list-item-title class="text-body-2">Cho đến khi được bật lại</v-list-item-title>
+                      </v-list-item>
+                    </v-list>
+                  </v-menu>
+                  <v-list-item v-else @click.stop="unmuteConversation(conv)" class="conv-menu-item rounded">
+                    <v-list-item-title class="text-body-2">Bật thông báo</v-list-item-title>
+                  </v-list-item>
+
+                  <!-- 6. Ẩn trò chuyện -->
+                  <v-list-item @click.stop="confirmHideConversation(conv)" class="conv-menu-item rounded">
+                    <v-list-item-title class="text-body-2">Ẩn trò chuyện</v-list-item-title>
+                  </v-list-item>
+
+                  <v-divider class="my-1 opacity-20" />
+
+                  <!-- 7. Xóa hội thoại (màu đỏ) -->
+                  <v-list-item @click.stop="confirmDeleteConversation(conv)" class="conv-menu-item rounded text-error">
+                    <v-list-item-title class="text-body-2 text-error font-weight-medium">Xóa hội thoại</v-list-item-title>
+                  </v-list-item>
+
+                  <!-- 8. Báo xấu -->
+                  <v-list-item @click.stop="openReportDialog(conv)" class="conv-menu-item rounded">
+                    <v-list-item-title class="text-body-2">Báo xấu</v-list-item-title>
+                  </v-list-item>
                 </v-list>
               </v-menu>
             </div>
@@ -444,19 +508,89 @@
         </v-card-text>
       </v-card>
     </v-dialog>
+
+    <!-- Hide Conversation Dialog -->
+    <v-dialog v-model="hideDialog.show" max-width="400">
+      <v-card class="rounded-xl border elevation-8" style="background: rgb(var(--v-theme-surface)) !important;">
+        <v-card-title class="d-flex align-center justify-space-between pa-4" style="border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));">
+          <span class="text-subtitle-1 font-weight-bold">Ẩn trò chuyện</span>
+          <v-btn icon="mdi-close" variant="text" size="small" @click="hideDialog.show = false" />
+        </v-card-title>
+        <v-card-text class="pa-4 text-body-2">
+          Bạn có chắc chắn muốn ẩn cuộc trò chuyện với <strong>{{ hideDialog.targetConv ? getConvName(hideDialog.targetConv) : '' }}</strong>? Bạn có thể mở lại bất cứ lúc nào bằng cách tìm kiếm tên hoặc SĐT.
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" class="rounded-lg text-none" @click="hideDialog.show = false">Hủy</v-btn>
+          <v-btn color="primary" variant="flat" class="rounded-lg text-none font-weight-bold px-4" @click="executeHideConversation">
+            Ẩn trò chuyện
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Delete Conversation Dialog -->
+    <v-dialog v-model="deleteDialog.show" max-width="400">
+      <v-card class="rounded-xl border elevation-8" style="background: rgb(var(--v-theme-surface)) !important;">
+        <v-card-title class="d-flex align-center justify-space-between pa-4" style="border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));">
+          <span class="text-subtitle-1 font-weight-bold text-error">Xóa hội thoại</span>
+          <v-btn icon="mdi-close" variant="text" size="small" @click="deleteDialog.show = false" />
+        </v-card-title>
+        <v-card-text class="pa-4 text-body-2">
+          Bạn có chắc muốn xóa cuộc trò chuyện với <strong>{{ deleteDialog.targetConv ? getConvName(deleteDialog.targetConv) : '' }}</strong>? Toàn bộ lịch sử tin nhắn sẽ bị xóa vĩnh viễn và không thể khôi phục.
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" class="rounded-lg text-none" @click="deleteDialog.show = false">Hủy</v-btn>
+          <v-btn color="error" variant="flat" class="rounded-lg text-none font-weight-bold px-4" :loading="deleteDialog.loading" @click="executeDeleteConversation">
+            Xóa hội thoại
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Report Conversation Dialog -->
+    <v-dialog v-model="reportDialog.show" max-width="420">
+      <v-card class="rounded-xl border elevation-8" style="background: rgb(var(--v-theme-surface)) !important;">
+        <v-card-title class="d-flex align-center justify-space-between pa-4" style="border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));">
+          <span class="text-subtitle-1 font-weight-bold">Báo xấu cuộc trò chuyện</span>
+          <v-btn icon="mdi-close" variant="text" size="small" @click="reportDialog.show = false" />
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <p class="text-body-2 mb-3 text-medium-emphasis">Vui lòng chọn lý do báo cáo vi phạm:</p>
+          <v-radio-group v-model="reportDialog.reason" density="compact" hide-details>
+            <v-radio label="Tin nhắn rác, quảng cáo làm phiền" value="spam" />
+            <v-radio label="Lừa đảo hoặc giả mạo" value="fraud" />
+            <v-radio label="Nội dung khiếm nhã, quấy rối" value="harassment" />
+            <v-radio label="Lý do khác" value="other" />
+          </v-radio-group>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" class="rounded-lg text-none" @click="reportDialog.show = false">Hủy</v-btn>
+          <v-btn color="primary" variant="flat" class="rounded-lg text-none font-weight-bold px-4" @click="executeReportConversation">
+            Gửi báo cáo
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 
 <script setup lang="ts">
-import { ref, onMounted, computed, reactive } from 'vue';
+import { ref, onMounted, computed, reactive, watch } from 'vue';
 import type { Conversation } from '@/composables/use-chat';
 import { api } from '@/api/index';
 import { useAuthStore } from '@/stores/auth';
+import { CONVERSATION_CATEGORIES } from '@/constants/conversation-categories';
 
 const authStore = useAuthStore();
 
 const props = defineProps<{
+  accountId?: string | null;
+  action?: string;
+  activeTab?: string;
   conversations: Conversation[];
   selectedId: string | null;
   loading: boolean;
@@ -466,16 +600,29 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [id: string];
-  'update:search': [value: string];
   'filter-account': [accountId: string | null];
+  'change-tab': [tab: string];
+  'action-handled': [action: string];
+  'update:search': [value: string];
   'refresh-conversations': [];
   'toggle-mute': [convId: string, isMuted: boolean];
 }>();
 
 const accountOptions = ref<{ text: string; value: string }[]>([]);
-const selectedAccountId = ref<string | null>(null);
+const currentAccountName = computed(() => accountOptions.value.find(account => account.value === props.accountId)?.text || 'Tất cả Zalo');
+const selectedAccountId = ref<string | null>(props.accountId || null);
+watch(() => props.accountId, value => { selectedAccountId.value = value || null; });
 const zaloAccountsList = ref<any[]>([]);
 const syncingMessages = ref(false);
+const accountActionsReady = ref(false);
+async function runAccountAction(action?: string) {
+  if (!accountActionsReady.value || !action) return;
+  if (action === 'add-friend') openSearchDialogDirect();
+  else if (action === 'create-group') await openCreateGroupDialog();
+  else if (action === 'sync') await syncRecentMessages();
+  emit('action-handled', action);
+}
+watch(() => props.action, action => { void runAccountAction(action); });
 
 async function syncRecentMessages() {
   syncingMessages.value = true;
@@ -521,8 +668,10 @@ onMounted(async () => {
       value: a.id,
     }));
   } catch {
-    // Non-critical — filter just won't show accounts
+    // Existing dialogs remain available even if the account list fails to load.
   }
+  accountActionsReady.value = true;
+  void runAccountAction(props.action);
 });
 
 function lastMessagePreview(conv: Conversation): string {
@@ -581,6 +730,8 @@ function lastMessagePreview(conv: Conversation): string {
       return prefix + '📞 Cuộc gọi';
     }
     case 'contact_card': return prefix + '👤 Danh thiếp liên hệ';
+    case 'bank_card': return prefix + '💳 Thẻ ngân hàng & VietQR';
+    case 'reminder': return prefix + '⏰ Nhắc hẹn Zalo';
     case 'file': {
       if (msg.content?.startsWith('{')) {
         try {
@@ -663,26 +814,212 @@ function isOverdue(conv: Conversation): boolean {
   return diffMs > 24 * 60 * 60 * 1000;
 }
 
-function isUncompletedTask(conv: Conversation): boolean {
-  const shouldTrack = conv.threadType === 'user' || conv.isCustomer;
-  if (!shouldTrack || conv.quoteCompleted) return false;
-  if (!conv.lastMessageAt) return false;
-  const lastTime = new Date(conv.lastMessageAt).getTime();
-  const diffTime = Date.now() - lastTime;
-  if (!conv.isReplied) {
-    // Staff hasn't replied yet: 5 minutes threshold
-    return diffTime >= 5 * 60 * 1000;
+function isUncompletedTask(_conv: Conversation): boolean {
+  return false; // Tạm tắt tính năng cảnh báo tồn đọng
+}
+void isOverdue;
+void isUncompletedTask;
+
+// Pinned conversations state
+const PINNED_STORAGE_KEY = 'crm:pinned-conversations';
+const pinnedConversationIds = ref<string[]>([]);
+try {
+  pinnedConversationIds.value = JSON.parse(localStorage.getItem(PINNED_STORAGE_KEY) || '[]');
+} catch {
+  pinnedConversationIds.value = [];
+}
+
+function isPinned(convId: string): boolean {
+  return pinnedConversationIds.value.includes(convId);
+}
+
+function togglePin(convId: string) {
+  const idx = pinnedConversationIds.value.indexOf(convId);
+  if (idx !== -1) {
+    pinnedConversationIds.value.splice(idx, 1);
+    snackbar.value = { show: true, text: 'Đã bỏ ghim hội thoại', color: 'info' };
   } else {
-    // Staff has replied, but customer has not responded: 24 hours threshold
-    return diffTime >= 24 * 60 * 60 * 1000;
+    pinnedConversationIds.value.unshift(convId);
+    snackbar.value = { show: true, text: 'Đã ghim hội thoại lên đầu', color: 'success' };
+  }
+  try {
+    localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedConversationIds.value));
+  } catch {}
+}
+
+// Category tag assignment
+async function toggleCategory(conv: Conversation, catTitle: string) {
+  const contact = conv.contact;
+  if (!contact || !contact.id) {
+    snackbar.value = { show: true, text: 'Không tìm thấy thông tin liên hệ', color: 'warning' };
+    return;
+  }
+
+  const current = Array.isArray(contact.tags) ? [...contact.tags] : [];
+  const idx = current.indexOf(catTitle);
+  if (idx !== -1) {
+    current.splice(idx, 1);
+  } else {
+    current.push(catTitle);
+  }
+  contact.tags = current;
+
+  try {
+    await api.put(`/contacts/${contact.id}/tags`, { tags: current });
+    snackbar.value = { show: true, text: `Đã cập nhật phân loại: ${catTitle}`, color: 'success' };
+    emit('refresh-conversations');
+  } catch (err) {
+    console.error('Failed to update category:', err);
+    snackbar.value = { show: true, text: 'Không thể cập nhật phân loại', color: 'error' };
   }
 }
 
-// Tracked orders sorting and countdown helpers
-const displayConversations = computed(() => {
-  if (props.mode !== 'tracked') {
-    return props.conversations;
+// Mark unread / read toggle
+async function toggleMarkUnread(conv: Conversation) {
+  if (conv.unreadCount > 0) {
+    conv.unreadCount = 0;
+    try {
+      await api.post(`/conversations/${conv.id}/mark-read`);
+      snackbar.value = { show: true, text: 'Đã đánh dấu đã đọc', color: 'success' };
+    } catch (err) {
+      console.error('Failed to mark read:', err);
+    }
+  } else {
+    conv.unreadCount = 1;
+    try {
+      await api.post(`/conversations/${conv.id}/mark-unread`);
+      snackbar.value = { show: true, text: 'Đã đánh dấu chưa đọc', color: 'info' };
+    } catch (err) {
+      console.error('Failed to mark unread:', err);
+    }
   }
+}
+
+// Add to group helper
+function handleAddToGroup(conv: Conversation) {
+  if (conv.contact?.zaloUid) {
+    createGroupDialog.selectedMembers = [conv.contact.zaloUid];
+  } else {
+    createGroupDialog.selectedMembers = [];
+  }
+  if (conv.zaloAccount?.id) {
+    createGroupDialog.accountId = conv.zaloAccount.id;
+  }
+  void openCreateGroupDialog();
+}
+
+// Mute notification helpers
+function muteConversation(conv: Conversation, minutes: number) {
+  emit('toggle-mute', conv.id, true);
+  conv.isMuted = true;
+  const label = minutes === 60 ? '1 giờ' : minutes === 240 ? '4 giờ' : minutes === 480 ? '8 giờ' : 'cho đến khi được bật lại';
+  snackbar.value = { show: true, text: `Đã tắt thông báo (${label})`, color: 'info' };
+}
+
+function unmuteConversation(conv: Conversation) {
+  emit('toggle-mute', conv.id, false);
+  conv.isMuted = false;
+  snackbar.value = { show: true, text: 'Đã bật thông báo', color: 'success' };
+}
+
+// Hidden conversations state
+const HIDDEN_STORAGE_KEY = 'crm:hidden-conversations';
+const hiddenConversationIds = ref<string[]>([]);
+try {
+  hiddenConversationIds.value = JSON.parse(localStorage.getItem(HIDDEN_STORAGE_KEY) || '[]');
+} catch {
+  hiddenConversationIds.value = [];
+}
+
+const hideDialog = reactive({
+  show: false,
+  targetConv: null as Conversation | null,
+});
+
+function confirmHideConversation(conv: Conversation) {
+  hideDialog.targetConv = conv;
+  hideDialog.show = true;
+}
+
+function executeHideConversation() {
+  if (!hideDialog.targetConv) return;
+  const convId = hideDialog.targetConv.id;
+  if (!hiddenConversationIds.value.includes(convId)) {
+    hiddenConversationIds.value.push(convId);
+    try {
+      localStorage.setItem(HIDDEN_STORAGE_KEY, JSON.stringify(hiddenConversationIds.value));
+    } catch {}
+  }
+  hideDialog.show = false;
+  snackbar.value = { show: true, text: 'Đã ẩn trò chuyện', color: 'info' };
+  if (props.selectedId === convId) {
+    emit('select', '');
+  }
+}
+
+// Delete conversation
+const deleteDialog = reactive({
+  show: false,
+  loading: false,
+  targetConv: null as Conversation | null,
+});
+
+function confirmDeleteConversation(conv: Conversation) {
+  deleteDialog.targetConv = conv;
+  deleteDialog.show = true;
+}
+
+async function executeDeleteConversation() {
+  if (!deleteDialog.targetConv) return;
+  const convId = deleteDialog.targetConv.id;
+  deleteDialog.loading = true;
+  try {
+    await api.delete(`/conversations/${convId}`);
+    deleteDialog.show = false;
+    snackbar.value = { show: true, text: 'Đã xóa hội thoại thành công', color: 'success' };
+    emit('refresh-conversations');
+    if (props.selectedId === convId) {
+      emit('select', '');
+    }
+  } catch (err) {
+    console.error('Failed to delete conversation:', err);
+    snackbar.value = { show: true, text: 'Không thể xóa hội thoại', color: 'error' };
+  } finally {
+    deleteDialog.loading = false;
+  }
+}
+
+// Report conversation
+const reportDialog = reactive({
+  show: false,
+  reason: 'spam',
+  targetConv: null as Conversation | null,
+});
+
+function openReportDialog(conv: Conversation) {
+  reportDialog.targetConv = conv;
+  reportDialog.reason = 'spam';
+  reportDialog.show = true;
+}
+
+function executeReportConversation() {
+  reportDialog.show = false;
+  snackbar.value = { show: true, text: 'Đã gửi báo cáo vi phạm thành công', color: 'success' };
+}
+
+function getConvName(conv: Conversation): string {
+  return conv.threadType === 'group'
+    ? (conv.contact?.fullName || conv.groupName || 'Nhóm')
+    : (conv.contact?.fullName || 'Khách hàng');
+}
+
+// Display conversations sorting (Pinned first, then tracked mode or lastMessageAt)
+const displayConversations = computed(() => {
+  // Filter out hidden conversations unless searching
+  const filtered = props.conversations.filter(c => {
+    if (props.search?.trim()) return true;
+    return !hiddenConversationIds.value.includes(c.id);
+  });
 
   const getDeliveryDays = (conv: Conversation): number => {
     const dateStr = conv.contact?.metadata?.deliveryDate;
@@ -694,20 +1031,29 @@ const displayConversations = computed(() => {
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   };
 
-  return [...props.conversations].sort((a, b) => {
-    // Tier 1: Needs reply (not replied yet)
-    const aNeedsReply = !a.isReplied;
-    const bNeedsReply = !b.isReplied;
-
-    if (aNeedsReply !== bNeedsReply) {
-      return aNeedsReply ? -1 : 1;
+  return [...filtered].sort((a, b) => {
+    // Priority 1: Pinned conversations
+    const aPinned = isPinned(a.id);
+    const bPinned = isPinned(b.id);
+    if (aPinned !== bPinned) {
+      return aPinned ? -1 : 1;
     }
 
-    // Sort by delivery days (ascending, fewer days left/overdue first)
-    const aDays = getDeliveryDays(a);
-    const bDays = getDeliveryDays(b);
-    if (aDays !== bDays) {
-      return aDays - bDays;
+    if (props.mode === 'tracked') {
+      // Tier 1: Needs reply (not replied yet)
+      const aNeedsReply = !a.isReplied;
+      const bNeedsReply = !b.isReplied;
+
+      if (aNeedsReply !== bNeedsReply) {
+        return aNeedsReply ? -1 : 1;
+      }
+
+      // Sort by delivery days (ascending, fewer days left/overdue first)
+      const aDays = getDeliveryDays(a);
+      const bDays = getDeliveryDays(b);
+      if (aDays !== bDays) {
+        return aDays - bDays;
+      }
     }
 
     // Fallback: sort by lastMessageAt descending
@@ -993,11 +1339,55 @@ async function submitCreateGroup() {
   opacity: 0.6;
   color: rgb(var(--v-theme-on-surface));
 }
-.conv-action-menu-btn {
-  opacity: 0.4;
-  transition: opacity 0.2s ease;
+:deep(.v-list-item__append) {
+  align-self: stretch !important;
+  display: flex !important;
+  align-items: stretch !important;
 }
-.conv-action-menu-btn:hover {
-  opacity: 1;
+.conv-append-container {
+  min-height: 44px;
+  padding: 1px 0 2px 0;
+}
+.conv-time-label {
+  font-size: 0.68rem !important;
+  line-height: 1.2 !important;
+  color: rgba(var(--v-theme-on-surface), 0.58) !important;
+  white-space: nowrap;
+}
+.conv-action-wrapper {
+  margin-top: auto;
+  height: 22px;
+  display: flex;
+  align-items: center;
+}
+.conv-action-menu-btn {
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+  min-height: 22px !important;
+  opacity: 0.35;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  border-radius: 50% !important;
+}
+.conversation-list-item:hover .conv-action-menu-btn,
+.conv-action-menu-btn:hover,
+.conv-action-menu-btn[aria-expanded="true"] {
+  opacity: 1 !important;
+  background: rgba(var(--v-theme-on-surface), 0.08) !important;
+}
+
+/* Zalo-native Context Menu */
+.conv-context-menu {
+  background: rgb(var(--v-theme-surface)) !important;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25) !important;
+}
+.conv-menu-item {
+  min-height: 38px !important;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.conv-menu-item:hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.08) !important;
 }
 </style>

@@ -12,11 +12,11 @@
     <template #activator="{ props: menuProps }">
       <v-btn
         v-bind="menuProps"
-        icon="mdi-lightning-bolt"
+        :icon="menuOpen ? 'mdi-message-flash' : 'mdi-message-flash-outline'"
         variant="text"
         color="warning"
         density="comfortable"
-        title="Chat nhanh (Rê chuột hoặc bấm để chọn mẫu)"
+        title="Tin nhắn nhanh (Rê chuột hoặc bấm để chọn mẫu)"
         class="quick-reply-trigger-btn"
       />
     </template>
@@ -29,7 +29,7 @@
       <!-- Header -->
       <div class="pa-3 pb-2 d-flex align-center border-bottom justify-space-between">
         <div class="d-flex align-center" style="gap: 6px;">
-          <v-icon color="warning" size="20">mdi-lightning-bolt</v-icon>
+          <v-icon color="warning" size="20">mdi-message-flash-outline</v-icon>
           <span class="font-weight-bold text-subtitle-2">Tin nhắn nhanh</span>
           <v-chip size="x-small" color="warning" variant="tonal" class="ml-1 font-weight-bold">
             {{ filteredReplies.length }}

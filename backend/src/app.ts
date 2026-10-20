@@ -21,6 +21,7 @@ import { logger } from './shared/utils/logger.js';
 import { authRoutes } from './modules/auth/auth-routes.js';
 import { zaloRoutes } from './modules/zalo/zalo-routes.js';
 import { chatRoutes } from './modules/chat/chat-routes.js';
+import { groupRoutes } from './modules/chat/group-routes.js';
 import { contactRoutes } from './modules/contacts/contact-routes.js';
 import { contactSubResourceRoutes } from './modules/contacts/contact-sub-resource-routes.js';
 import { appointmentRoutes } from './modules/contacts/appointment-routes.js';
@@ -39,12 +40,15 @@ import { searchRoutes } from './modules/search/search-routes.js';
 import { startZaloHealthCheck } from './modules/zalo/zalo-health-check.js';
 import { publicApiRoutes } from './modules/api/public-api-routes.js';
 import { webhookSettingsRoutes } from './modules/api/webhook-settings-routes.js';
+import { handoverRoutes } from './modules/handovers/handover-routes.js';
+import { customerNeedRoutes } from './modules/customer-needs/customer-need-routes.js';
 import { orderRoutes } from './modules/orders/order-routes.js';
 import { pushRoutes } from './modules/push/push-routes.js';
 import fs from 'fs';
 import { attendanceRoutes } from './modules/attendance/attendance-routes.js';
 import { startAttendanceReminder } from './modules/attendance/attendance-reminder.js';
 import { mediaRoutes } from './modules/media/media-routes.js';
+import { zaloExtendedRoutes } from './modules/zalo/zalo-extended-routes.js';
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -136,6 +140,7 @@ async function bootstrap() {
   await app.register(authRoutes);
   await app.register(zaloRoutes);
   await app.register(chatRoutes);
+  await app.register(groupRoutes);
   await app.register(contactRoutes);
   await app.register(contactSubResourceRoutes);
   await app.register(appointmentRoutes);
@@ -151,9 +156,12 @@ async function bootstrap() {
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
   await app.register(orderRoutes);
+  await app.register(customerNeedRoutes);
+  await app.register(handoverRoutes);
   await app.register(pushRoutes);
   await app.register(attendanceRoutes);
   await app.register(mediaRoutes);
+  await app.register(zaloExtendedRoutes);
 
 
   // Liveness/readiness probe — also checks DB connectivity

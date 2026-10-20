@@ -301,8 +301,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useZaloAccounts, type ZaloAccount } from '@/composables/use-zalo-accounts';
 import { useAuthStore } from '@/stores/auth';
 import ZaloAccessDialog from '@/components/settings/ZaloAccessDialog.vue';
@@ -320,8 +320,16 @@ const {
 
 const authStore = useAuthStore();
 const router = useRouter();
+const route = useRoute();
 
 const showAddDialog = ref(false);
+watch(() => route.query.add, value => {
+  if (value === '1' && authStore.isAdmin) {
+    showAddDialog.value = true;
+    const { add: _add, ...query } = route.query;
+    router.replace({ path: route.path, query });
+  }
+}, { immediate: true });
 const syncing = ref<string | null>(null);
 const showDeleteDialog = ref(false);
 const showAccessDialog = ref(false);

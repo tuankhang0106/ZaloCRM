@@ -10,6 +10,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useTheme } from 'vuetify';
+const theme = useTheme();
 import { Pie } from 'vue-chartjs';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 
@@ -20,10 +22,10 @@ const props = defineProps<{
 }>();
 
 const sourceColors: Record<string, string> = {
-  'FB': '#1877F2',
-  'TT': '#000000',
-  'GT': '#FF6F00',
-  'CN': '#4CAF50',
+  'FB': '#6D9DA5',
+  'TT': '#52635A',
+  'GT': '#BE9B60',
+  'CN': '#A2BC9B',
 };
 
 function getCount(item: { _count: { _all: number } | number }): number {
@@ -41,9 +43,10 @@ const chartData = computed(() => {
   };
 });
 
-const chartOptions = {
+const chartOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
-  plugins: { legend: { position: 'right' as const, labels: { boxWidth: 12 } } },
-};
+  plugins: { legend: { position: 'right' as const, labels: { color: (theme.current.value.dark ? '#DCE6DF' : '#52635A'), usePointStyle: true, boxWidth: 8, padding: 18, font: { family: 'Plus Jakarta Sans', size: 11 } } } },
+
+}));
 </script>

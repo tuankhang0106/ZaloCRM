@@ -1,18 +1,23 @@
 <template>
-  <div class="chat-container d-flex" style="height: calc(100vh - 64px);">
+  <div class="chat-container d-flex" >
     <!-- Conversation list — resizable (hidden on mobile if chat active) -->
     <div
-      v-if="!mobile || !selectedConvId"
+      v-show="!mobile || !selectedConvId"
       class="chat-panel-left"
       :style="mobile ? { width: '100%' } : { width: leftWidth + 'px' }"
     >
       <ConversationList
-        :conversations="conversations"
+        :conversations="visibleConversations"
+        :account-id="accountFilter"
+        @filter-account="onFilterAccount"
+        :action="typeof route.query.action === 'string' ? route.query.action : undefined"
+        :active-tab="activeConversationTab"
+        @change-tab="changeConversationTab"
+        @action-handled="clearAccountAction"
         :selected-id="selectedConvId"
         :loading="loadingConvs"
         v-model:search="searchQuery"
         @select="selectConversation"
-        @filter-account="onFilterAccount"
         @refresh-conversations="fetchConversations"
         @toggle-mute="handleToggleMute"
         :mode="(route.query.mode as string) || ''"
@@ -37,25 +42,28 @@
       :show-contact-panel="showContactPanel"
       :is-mobile="mobile"
       @back="selectedConvId = null"
+      @group-updated="fetchConversations()"
+      @contact-updated="fetchConversations()"
       style="flex: 1; min-width: 300px; height: 100%;"
     />
 
     <!-- Contact panel — resizable (desktop only) -->
-    <div v-if="!mobile && showContactPanel && selectedConv?.contact" class="chat-panel-right" :style="{ width: rightWidth + 'px' }">
+    <div v-if="!mobile && showContactPanel && selectedConv" class="chat-panel-right" :style="{ width: rightWidth + 'px' }">
       <div class="resize-handle resize-handle-left" @mousedown="startResize('right', $event)" />
       <ChatContactPanel
-        :contact-id="selectedConv.contact.id"
-        :contact="selectedConv.contact"
+        :contact-id="selectedConv.contact?.id || null"
+        :contact="selectedConv.contact || null"
         :conversation-id="selectedConv.id"
         :conversation="selectedConv"
         @close="showContactPanel = false"
         @saved="fetchConversations()"
+        @toggle-mute="handleToggleMute(selectedConv.id, !selectedConv.isMuted)"
       />
     </div>
 
     <!-- Contact panel — navigation drawer overlay (mobile only) -->
     <v-navigation-drawer
-      v-if="mobile && showContactPanel && selectedConv?.contact"
+      v-if="mobile && showContactPanel && selectedConv"
       v-model="showContactPanel"
       location="right"
       temporary
@@ -63,33 +71,35 @@
       style="z-index: 1008;"
     >
       <ChatContactPanel
-        :contact-id="selectedConv.contact.id"
-        :contact="selectedConv.contact"
+        :contact-id="selectedConv.contact?.id || null"
+        :contact="selectedConv.contact || null"
         :conversation-id="selectedConv.id"
         :conversation="selectedConv"
         @close="showContactPanel = false"
         @saved="fetchConversations()"
+        @toggle-mute="handleToggleMute(selectedConv.id, !selectedConv.isMuted)"
       />
     </v-navigation-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useDisplay } from 'vuetify';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import ConversationList from '@/components/chat/ConversationList.vue';
 import MessageThread from '@/components/chat/MessageThread.vue';
 import ChatContactPanel from '@/components/chat/ChatContactPanel.vue';
 import { useChat } from '@/composables/use-chat';
 
 const route = useRoute();
+const router = useRouter();
 const { mobile } = useDisplay();
 
 const {
   conversations, selectedConvId, selectedConv, messages,
   loadingConvs, loadingMsgs, sendingMsg, searchQuery, accountFilter,
-  tasksMode, trackedMode,
+  tasksMode, trackedMode, unreadMode, categoryFilter, statusFilter, threadTypeFilter,
   fetchConversations, selectConversation, sendMessage, sendFile,
   recallMessage, deleteMessageForMe,
   initSocket, destroySocket, toggleMute,
@@ -103,12 +113,13 @@ async function handleToggleMute(convId: string, isMuted: boolean) {
   }
 }
 
-function onFilterAccount(id: string | null) {
-  accountFilter.value = id;
-  fetchConversations();
+
+function onFilterAccount(accountId: string | null) {
+  const { accountId: _account, convId: _conv, ...query } = route.query;
+  router.replace({ path: '/chat', query: accountId ? { ...query, accountId } : query });
 }
 
-const showContactPanel = ref(false);
+const showContactPanel = ref(true);
 
 // Resizable panel widths (restored from localStorage)
 const leftWidth = ref(parseInt(localStorage.getItem('chat-left-width') || '320'));
@@ -160,10 +171,47 @@ onMounted(async () => {
 });
 onUnmounted(() => { destroySocket(); });
 
-// Watch route query to toggle tasksMode and trackedMode automatically
+const activeConversationTab = computed(() => {
+  if (['unread', 'personal', 'group'].includes(String(route.query.tab))) return String(route.query.tab);
+  return route.query.mode === 'unread' ? 'unread' : 'all';
+});
+function changeConversationTab(tab: string) {
+  const { tab: _tab, mode, ...query } = route.query;
+  router.replace({ path: '/chat', query: {
+    ...query, ...(mode && mode !== 'unread' ? { mode } : {}), ...(tab !== 'all' ? { tab } : {}),
+  } });
+}
+function clearAccountAction(action: string) {
+  if (route.query.action !== action) return;
+  const { action: _action, ...query } = route.query;
+  router.replace({ path: '/chat', query });
+}
+
+const visibleConversations = computed(() => {
+  let list = unreadMode.value
+    ? conversations.value.filter(c => c.unreadCount > 0 || c.id === selectedConvId.value)
+    : conversations.value;
+  if (statusFilter.value) {
+    list = list.filter(c => {
+      const cStatus = c.contact?.status || 'new';
+      if (statusFilter.value === 'completed') {
+        return cStatus === 'completed' || cStatus === 'vip';
+      }
+      return cStatus === statusFilter.value;
+    });
+  }
+  return list;
+});
+
+// Keep account and mode filters in sync with navigation.
 watch(
-  () => route.query.mode,
-  (newMode) => {
+  () => [route.query.mode, route.query.accountId, route.query.category, route.query.status, activeConversationTab.value],
+  ([newMode, accountId, category, status, tab]) => {
+    threadTypeFilter.value = tab === 'personal' ? 'user' : tab === 'group' ? 'group' : null;
+    categoryFilter.value = typeof category === 'string' ? category : null;
+    statusFilter.value = typeof status === 'string' ? status : null;
+    accountFilter.value = typeof accountId === 'string' ? accountId : null;
+    unreadMode.value = tab === 'unread';
     tasksMode.value = newMode === 'tasks';
     trackedMode.value = newMode === 'tracked';
     fetchConversations();
@@ -191,7 +239,9 @@ watch(searchQuery, () => {
 
 <style scoped>
 .chat-container {
-  margin: -12px;
+  margin: 0;
+  height: 100%;
+  min-height: 0;
 }
 
 .chat-panel-left {

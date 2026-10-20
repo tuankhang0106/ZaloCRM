@@ -1,5 +1,5 @@
 <template>
-  <v-app :class="{ 'liquid-bg': isDark }">
+  <v-app class="crm-shell" :class="{ 'liquid-bg': isDark }">
     <!-- Sticky alarm banner if Zalo accounts are disconnected -->
     <v-system-bar
       v-if="disconnectedAccounts.length > 0"
@@ -24,21 +24,21 @@
       </v-btn>
     </v-system-bar>
 
-    <!-- Top bar — glass effect -->
-    <v-app-bar density="comfortable" flat>
+    <!-- Top bar — Clean executive header -->
+    <v-app-bar density="comfortable" flat class="crm-topbar">
       <v-app-bar-nav-icon
         @click="toggleSidebar"
         :title="!mobile && rail ? 'Mở rộng sidebar (Ctrl+B)' : 'Thu gọn sidebar (Ctrl+B)'"
       />
 
-      <!-- Custom Brand Logo + Title (Synchronized with Login Branding, supporting custom uploaded logos) -->
-      <div class="d-flex align-center" :style="{ gap: mobile ? '6px' : '12px', marginLeft: mobile ? '4px' : '12px' }">
+      <!-- Custom Brand Logo + Title -->
+      <div class="d-flex align-center" :style="{ gap: mobile ? '6px' : '10px', marginLeft: mobile ? '4px' : '8px' }">
         <img v-if="orgLogo" :src="orgLogo" alt="Logo" :style="{ width: mobile ? '28px' : '32px', height: mobile ? '28px' : '32px', objectFit: 'contain' }" />
         <img v-else :src="defaultLogo" alt="Logo" :style="{ width: mobile ? '28px' : '32px', height: mobile ? '28px' : '32px', objectFit: 'contain' }" />
         <v-app-bar-title v-if="!mobile" class="ml-0">
-          <span class="font-weight-bold" style="font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.5px;">
+          <span class="font-weight-bold" style="font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.4px; font-size: 1.05rem;">
             <template v-if="orgName === 'ZaloCRM'">
-              Zalo<span style="color: #00B074;">CRM</span>
+              Zalo<span style="color: #72B99A;">CRM</span>
             </template>
             <template v-else>
               {{ orgName }}
@@ -47,382 +47,258 @@
         </v-app-bar-title>
       </div>
 
-      <!-- Global search (Hidden on mobile) -->
-      <GlobalSearch v-if="!mobile" class="mx-2" />
-
       <v-spacer />
-
-      <!-- Online User Status Indicator (Hidden on mobile to save space) -->
-      <div
-        v-if="authStore.user && !mobile"
-        class="d-flex align-center px-3 py-1 rounded-pill mr-3"
-        style="border: 1px solid #4CAF50; background: rgba(76, 175, 80, 0.1); box-shadow: 0 0 4px rgba(76, 175, 80, 0.2);"
-      >
-        <span
-          class="status-dot mr-2"
-          style="width: 6px; height: 6px; border-radius: 50%; background: #4CAF50; display: inline-block; box-shadow: 0 0 6px #4CAF50;"
-        ></span>
-        <span class="text-caption font-weight-bold text-success" style="letter-spacing: 0.2px; font-family: 'Plus Jakarta Sans', sans-serif;">
-          {{ authStore.user.fullName }}
-        </span>
-      </div>
-
-      <!-- Time Attendance Status in Top Bar -->
-      <div v-if="authStore.user" class="d-flex align-center mr-3" style="gap: 8px;">
-        <template v-if="attendanceStatus">
-          <!-- Already Checked out -->
-          <v-chip
-            v-if="attendanceStatus.checkOutAt"
-            size="small"
-            color="default"
-            variant="flat"
-            prepend-icon="mdi-clock-check-outline"
-            title="Đã hoàn thành chấm công ngày hôm nay"
-          >
-            Đã Về ({{ formatTimeShort(attendanceStatus.checkOutAt) }})
-          </v-chip>
-          <!-- Checked in, not Checked out yet -->
-          <template v-else>
-            <v-chip
-              size="small"
-              :color="getCheckInColorClass(attendanceStatus.checkInStatus)"
-              variant="flat"
-              prepend-icon="mdi-fingerprint"
-              to="/attendance"
-              title="Đã check-in hôm nay. Bấm để xem chi tiết lịch sử."
-              class="cursor-pointer"
-            >
-              {{ isLate(attendanceStatus.checkInStatus) ? 'Muộn' : 'Đúng Giờ' }} ({{ formatTimeShort(attendanceStatus.checkInAt) }})
-            </v-chip>
-            <v-btn
-              color="error"
-              size="x-small"
-              variant="flat"
-              prepend-icon="mdi-logout-variant"
-              title="Check-out ra về"
-              @click="handleManualCheckOut"
-              class="px-2"
-              height="28"
-            >
-              {{ mobile ? '' : 'Check-out' }}
-            </v-btn>
-          </template>
-        </template>
-        <!-- Not checked in yet -->
-        <v-chip
-          v-else
-          size="small"
-          color="warning"
-          variant="flat"
-          prepend-icon="mdi-fingerprint-off"
-          title="Chưa thực hiện chấm công ngày hôm nay"
-        >
-          Chưa Check-in
-        </v-chip>
-      </div>
-
-      <NotificationBell />
-      <!-- Theme Switcher Menu in Top Bar -->
-      <v-menu transition="slide-y-transition" open-on-hover close-delay="100">
-        <template #activator="{ props }">
-          <v-btn icon variant="text" v-bind="props">
-            <v-icon color="primary">mdi-palette-outline</v-icon>
-          </v-btn>
-        </template>
-        <v-list density="compact" rounded="xl" width="220" class="elevation-10 mt-1 pa-2">
-          <v-list-subheader class="text-uppercase font-weight-bold text-caption pb-1">Chọn Giao Diện</v-list-subheader>
-          
-          <v-list-item
-            v-for="item in themeOptions"
-            :key="item.id"
-            @click="changeTheme(item.id)"
-            :active="currentTheme === item.id"
-            rounded="lg"
-            class="mb-1"
-          >
-            <template #prepend>
-              <v-avatar size="24" :color="item.color" class="mr-2 border-sm">
-                <v-icon v-if="currentTheme === item.id" size="14" color="white">mdi-check</v-icon>
-              </v-avatar>
-            </template>
-            <v-list-item-title class="font-weight-bold text-body-2">{{ item.title }}</v-list-item-title>
-          </v-list-item>
-
-          <v-divider class="my-1" />
-
-          <!-- Restore Defaults list item -->
-          <v-list-item
-            @click="resetToOriginalDefaults"
-            rounded="lg"
-            class="mb-1 text-error"
-          >
-            <template #prepend>
-              <v-avatar size="24" class="mr-2 border-sm bg-error-lighten-5">
-                <v-icon size="14" color="error">mdi-refresh</v-icon>
-              </v-avatar>
-            </template>
-            <v-list-item-title class="font-weight-bold text-body-2 text-error">Khôi phục mặc định</v-list-item-title>
-          </v-list-item>
-        </v-list>
-      </v-menu>
-      
-      <!-- Push Notification Toggle -->
-      <v-btn
-        v-if="notificationsSupported"
-        icon
-        variant="text"
-        @click="toggleNotifications"
-        :title="notificationsEnabled ? 'Tắt thông báo đẩy' : 'Bật thông báo đẩy'"
-        class="mr-1"
-      >
-        <v-icon :color="notificationsEnabled ? 'primary' : 'grey'">
-          {{ notificationsEnabled ? 'mdi-bell-ring-outline' : 'mdi-bell-off-outline' }}
-        </v-icon>
-      </v-btn>
-
-      <!-- Sound Mute/Unmute Toggle -->
-      <v-btn
-        icon
-        variant="text"
-        @click="toggleSound"
-        :title="soundEnabled ? 'Tắt âm thanh thông báo' : 'Bật âm thanh thông báo'"
-      >
-        <v-icon :color="soundEnabled ? 'primary' : 'grey'">
-          {{ soundEnabled ? 'mdi-volume-high' : 'mdi-volume-off' }}
-        </v-icon>
-      </v-btn>
-
-      <v-btn icon variant="text" @click="logout">
-        <v-icon>mdi-logout</v-icon>
-      </v-btn>
     </v-app-bar>
 
-    <!-- Sidebar navigation (evondevKit Smart Grouping & Rail Tooltip) -->
+    <!-- Sidebar navigation -->
     <v-navigation-drawer
       v-model="drawer"
       :rail="!mobile && rail"
       :permanent="!mobile"
       :temporary="mobile"
-      :width="260"
+      :width="225"
       :rail-width="68"
       style="z-index: 1009;"
       class="custom-app-sidebar"
+      @mouseenter="onSidebarMouseEnter"
+      @mouseleave="onSidebarMouseLeave"
     >
-      <v-list density="compact" nav class="px-2 py-2">
-        <div v-for="(group, gIdx) in filteredMenuGroups" :key="group.title" class="mb-3">
-          <!-- Subheader when expanded -->
-          <div
-            v-if="!rail || mobile"
-            class="text-uppercase font-weight-bold px-3 py-1 menu-group-header"
-          >
-            {{ group.title }}
-          </div>
-          <!-- Divider when collapsed in rail mode (between groups) -->
-          <v-divider v-else-if="gIdx > 0" class="my-2 mx-2 opacity-20" />
+      <section class="connected-accounts" aria-label="Tài khoản kết nối">
+        <div class="connections-heading" :class="{ 'connections-heading--rail': rail && !mobile }">
+          <span v-if="!rail || mobile" class="menu-group-header">TÀI KHOẢN KẾT NỐI <span class="connection-total">{{ accounts.length }}</span></span>
+          <v-btn v-if="authStore.isAdmin" icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="Thêm tài khoản Zalo" aria-label="Thêm tài khoản Zalo" @click="navigateTo('/zalo-accounts?add=1')" />
+        </div>
+        <v-list density="compact" nav class="account-list pa-0">
+          <v-list-item v-for="account in accounts" :key="account.id" class="connected-account" :active="route.path === '/chat' && sidebarAccountId === account.id" :title="!rail || mobile ? account.displayName || 'Tài khoản Zalo' : undefined" @click="selectSidebarAccount(account.id)">
+            <template #prepend>
+              <span class="account-avatar">
+                <img v-if="account.avatarUrl" :src="account.avatarUrl" alt="" class="account-avatar-img" />
+                <span v-else>{{ (account.displayName || 'Z').trim().charAt(0).toUpperCase() }}</span>
+                <i :class="['account-status', { 'account-status--online': (account.liveStatus || account.status) === 'connected' }]" />
+              </span>
+            </template>
+            <v-tooltip activator="parent" location="right" :disabled="!rail || mobile">{{ account.displayName || 'Tài khoản Zalo' }}</v-tooltip>
+          </v-list-item>
+        </v-list>
+      </section>
 
-          <template v-for="item in group.items" :key="item.path">
-            <!-- Rail mode: Wrap item in tooltip -->
-            <v-tooltip
-              v-if="!mobile && rail"
-              location="right"
-              open-delay="60"
-              content-class="custom-nav-tooltip"
-            >
-              <template #activator="{ props: tipProps }">
-                <v-list-item
-                  v-bind="tipProps"
-                  :active="isMenuItemActive(item)"
-                  :prepend-icon="item.icon"
-                  rounded="xl"
-                  class="mb-1 nav-item"
-                  @click="navigateTo(item.path)"
-                >
-                  <!-- Badge dot indicator for collapsed rail mode -->
-                  <template #append v-if="(item.badge === 'tasks' && taskCount > 0) || (item.badge === 'tracked' && trackedCount > 0)">
-                    <span
-                      class="rail-badge-dot"
-                      :class="item.badge === 'tasks' ? 'bg-error' : 'bg-warning'"
-                    />
+      <v-list density="compact" nav class="px-2 pt-2.5 pb-2 sidebar-navigation">
+        <div v-for="group in filteredMenuGroups" :key="group.title" class="mb-2">
+          <button v-if="group.title === 'Tổng quan'" class="system-group-toggle menu-group-header" :aria-expanded="overviewExpanded" aria-controls="sidebar-overview-items" :aria-label="overviewExpanded ? 'Thu gọn Tổng quan' : 'Mở rộng Tổng quan'" @click="overviewExpanded = !overviewExpanded">
+            <span v-if="!rail || mobile">TỔNG QUAN</span><v-icon v-else size="18">mdi-view-dashboard-outline</v-icon>
+            <v-icon size="16">{{ overviewExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+          </button>
+          <button v-else-if="group.title === 'Hệ thống'" class="system-group-toggle menu-group-header" :aria-expanded="systemExpanded" aria-controls="sidebar-system-items" @click="systemExpanded = !systemExpanded" :aria-label="systemExpanded ? 'Thu gọn Hệ thống' : 'Mở rộng Hệ thống'" :title="systemExpanded ? 'Thu gọn Hệ thống' : 'Mở rộng Hệ thống'">
+            <span v-if="!rail || mobile">HỆ THỐNG</span><v-icon v-else size="18">mdi-cog-outline</v-icon>
+            <v-icon size="16">{{ systemExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+          </button>
+          <div v-else-if="!rail || mobile" class="text-uppercase font-weight-bold px-3 py-1 menu-group-header" style="font-size: 0.72rem; letter-spacing: 0.6px;">{{ group.title }}</div>
+          <v-divider v-else class="my-2 mx-2 opacity-20" />
+
+          <div v-show="group.title === 'Hệ thống' ? systemExpanded : group.title === 'Tổng quan' ? overviewExpanded : true" :id="group.title === 'Hệ thống' ? 'sidebar-system-items' : group.title === 'Tổng quan' ? 'sidebar-overview-items' : undefined">
+            <v-list-item v-for="item in group.items" :key="item.path" :active="isMenuItemActive(item)" :title="!rail || mobile ? item.title : undefined" class="mb-1 nav-item" :class="{ 'category-nav-item': item.categoryColor }" @click="navigateTo(item.path)">
+              <template #prepend>
+                <v-icon :icon="item.icon" :style="{ color: item.color || item.categoryColor }" size="19" />
+              </template>
+              <template #append v-if="menuBadge(item) > 0">
+                <span v-if="!mobile && rail" class="rail-badge-dot bg-primary" />
+                <span v-else class="nav-count" :class="{ 'nav-count--warning': item.badge === 'tracked' }">{{ menuBadge(item) > 99 ? '99+' : menuBadge(item) }}</span>
+              </template>
+              <v-tooltip activator="parent" location="right" :disabled="!rail || mobile">{{ item.title }}<span v-if="menuBadge(item)"> · {{ menuBadge(item) }}</span></v-tooltip>
+            </v-list-item>
+
+            <!-- System Controls (Merged from image 1) -->
+            <template v-if="group.title === 'Hệ thống'">
+              <!-- User Profile & Attendance Card (Expanded view) -->
+              <div v-if="authStore.user && (!rail || mobile)" class="system-user-box pa-1.5 mb-1.5 rounded-lg">
+                <!-- User name & Online badge -->
+                <div class="d-flex align-center justify-space-between mb-2">
+                  <div class="d-flex align-center" style="gap: 8px;">
+                    <span class="user-avatar-badge">
+                      <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="" class="user-avatar-img" />
+                      <span v-else>{{ (authStore.user.fullName || 'U').charAt(0).toUpperCase() }}</span>
+                    </span>
+                    <div style="min-width: 0;">
+                      <div class="d-flex align-center" style="gap: 5px;">
+                        <span class="user-online-dot" />
+                        <span class="text-body-2 font-weight-bold text-truncate" style="letter-spacing: -0.2px;">{{ authStore.user.fullName }}</span>
+                      </div>
+                      <span class="text-caption text-medium-emphasis" style="font-size: 11px;">{{ authStore.isAdmin ? 'Quản trị viên' : 'Nhân viên' }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Attendance Status & Actions -->
+                <div class="system-attendance-wrap d-flex align-center" style="gap: 6px;">
+                  <template v-if="attendanceStatus">
+                    <v-chip
+                      v-if="attendanceStatus.checkOutAt"
+                      size="x-small"
+                      color="default"
+                      variant="flat"
+                      prepend-icon="mdi-clock-check-outline"
+                      class="flex-grow-1 justify-center font-weight-medium"
+                      title="Đã hoàn thành chấm công hôm nay"
+                    >
+                      Đã Về ({{ formatTimeShort(attendanceStatus.checkOutAt) }})
+                    </v-chip>
+                    <template v-else>
+                      <v-chip
+                        size="x-small"
+                        :color="getCheckInColorClass(attendanceStatus.checkInStatus)"
+                        variant="flat"
+                        prepend-icon="mdi-fingerprint"
+                        to="/attendance"
+                        title="Đã check-in. Bấm để xem chi tiết lịch sử."
+                        class="cursor-pointer flex-grow-1 justify-center font-weight-medium"
+                      >
+                        {{ isLate(attendanceStatus.checkInStatus) ? 'Muộn' : 'Đúng Giờ' }} ({{ formatTimeShort(attendanceStatus.checkInAt) }})
+                      </v-chip>
+                      <v-btn
+                        color="error"
+                        size="x-small"
+                        variant="flat"
+                        prepend-icon="mdi-logout-variant"
+                        title="Check-out ra về"
+                        @click="handleManualCheckOut"
+                        class="px-2"
+                        height="24"
+                        style="font-size: 11px;"
+                      >
+                        Check-out
+                      </v-btn>
+                    </template>
                   </template>
+                  <v-chip
+                    v-else
+                    size="x-small"
+                    color="warning"
+                    variant="flat"
+                    prepend-icon="mdi-fingerprint-off"
+                    to="/attendance"
+                    class="cursor-pointer flex-grow-1 justify-center font-weight-medium"
+                    title="Chưa check-in ngày hôm nay"
+                  >
+                    Chưa Check-in
+                  </v-chip>
+                </div>
+              </div>
+
+              <!-- Quick Control Dock (Notifications, Theme, Push, Sound, Logout) -->
+              <div v-if="!rail || mobile" class="system-quick-dock d-flex align-center justify-space-around py-1 px-1 mb-2">
+                <!-- Notification Bell -->
+                <div class="dock-btn-wrap" title="Thông báo">
+                  <NotificationBell />
+                </div>
+
+                <!-- Theme Switcher Menu -->
+                <v-menu transition="slide-y-transition" open-on-hover close-delay="100">
+                  <template #activator="{ props }">
+                    <v-btn icon size="small" variant="text" v-bind="props" title="Đổi chủ đề" aria-label="Đổi chủ đề">
+                      <v-icon size="18" color="primary">mdi-palette-outline</v-icon>
+                    </v-btn>
+                  </template>
+                  <v-list density="compact" rounded="xl" width="220" class="elevation-10 mt-1 pa-2">
+                    <v-list-subheader class="text-uppercase font-weight-bold text-caption pb-1">Chọn Giao Diện</v-list-subheader>
+                    <v-list-item
+                      v-for="item in themeOptions"
+                      :key="item.id"
+                      @click="changeTheme(item.id)"
+                      :active="currentTheme === item.id"
+                      rounded="lg"
+                      class="mb-1"
+                    >
+                      <template #prepend>
+                        <v-avatar size="24" :color="item.color" class="mr-2 border-sm">
+                          <v-icon v-if="currentTheme === item.id" size="14" color="white">mdi-check</v-icon>
+                        </v-avatar>
+                      </template>
+                      <v-list-item-title class="font-weight-bold text-body-2">{{ item.title }}</v-list-item-title>
+                    </v-list-item>
+                    <v-divider class="my-1" />
+                    <v-list-item @click="resetToOriginalDefaults" rounded="lg" class="mb-1 text-error">
+                      <template #prepend>
+                        <v-avatar size="24" class="mr-2 border-sm bg-error-lighten-5">
+                          <v-icon size="14" color="error">mdi-refresh</v-icon>
+                        </v-avatar>
+                      </template>
+                      <v-list-item-title class="font-weight-bold text-body-2 text-error">Khôi phục mặc định</v-list-item-title>
+                    </v-list-item>
+                  </v-list>
+                </v-menu>
+
+                <!-- Push Notification Toggle -->
+                <v-btn
+                  v-if="notificationsSupported"
+                  icon
+                  size="small"
+                  variant="text"
+                  @click="toggleNotifications"
+                  :title="notificationsEnabled ? 'Tắt thông báo đẩy' : 'Bật thông báo đẩy'"
+                  aria-label="Thông báo đẩy"
+                >
+                  <v-icon size="18" :color="notificationsEnabled ? 'primary' : 'grey'">
+                    {{ notificationsEnabled ? 'mdi-bell-ring-outline' : 'mdi-bell-off-outline' }}
+                  </v-icon>
+                </v-btn>
+
+                <!-- Sound Toggle -->
+                <v-btn
+                  icon
+                  size="small"
+                  variant="text"
+                  @click="toggleSound"
+                  :title="soundEnabled ? 'Tắt âm thanh' : 'Bật âm thanh'"
+                  aria-label="Âm thanh"
+                >
+                  <v-icon size="18" :color="soundEnabled ? 'primary' : 'grey'">
+                    {{ soundEnabled ? 'mdi-volume-high' : 'mdi-volume-off' }}
+                  </v-icon>
+                </v-btn>
+
+                <!-- Logout Button -->
+                <v-btn icon size="small" variant="text" @click="logout" title="Đăng xuất" aria-label="Đăng xuất">
+                  <v-icon size="18" color="error">mdi-logout</v-icon>
+                </v-btn>
+              </div>
+
+              <!-- Rail compact controls when sidebar is rail mode -->
+              <template v-if="rail && !mobile">
+                <v-list-item
+                  role="button"
+                  tabindex="0"
+                  prepend-icon="mdi-logout"
+                  title="Đăng xuất"
+                  class="mb-1 nav-item text-error"
+                  aria-label="Đăng xuất"
+                  @click="logout"
+                >
+                  <v-tooltip activator="parent" location="right">Đăng xuất</v-tooltip>
                 </v-list-item>
               </template>
-              <div class="d-flex align-center" style="gap: 6px;">
-                <span>{{ item.title }}</span>
-                <v-badge
-                  v-if="item.badge === 'tasks' && taskCount > 0"
-                  :content="taskCount"
-                  color="error"
-                  inline
-                />
-                <v-badge
-                  v-if="item.badge === 'tracked' && trackedCount > 0"
-                  :content="trackedCount"
-                  color="warning"
-                  inline
-                />
-              </div>
-            </v-tooltip>
 
-            <!-- Expanded mode or Mobile -->
-            <v-list-item
-              v-else
-              :active="isMenuItemActive(item)"
-              :prepend-icon="item.icon"
-              :title="item.title"
-              rounded="xl"
-              class="mb-1 nav-item"
-              @click="navigateTo(item.path)"
-            >
-              <template #append v-if="item.badge === 'tasks' && taskCount > 0">
-                <v-badge
-                  :content="taskCount"
-                  color="error"
-                  inline
-                  class="ml-2 animate-pulse"
-                />
-              </template>
-              <template #append v-if="item.badge === 'tracked' && trackedCount > 0">
-                <v-badge
-                  :content="trackedCount"
-                  color="warning"
-                  inline
-                  class="ml-2 animate-pulse"
-                />
-              </template>
-            </v-list-item>
-          </template>
+              <!-- Rail collapse toggle item -->
+              <v-list-item
+                v-if="!mobile"
+                role="button"
+                :prepend-icon="rail ? 'mdi-chevron-double-right' : 'mdi-chevron-double-left'"
+                :title="!rail ? 'Thu gọn thanh bên' : undefined"
+                class="nav-collapse-btn"
+                :aria-label="rail ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên'"
+                @click="rail = !rail"
+              >
+                <template #append v-if="!rail"><span class="sidebar-shortcut">Ctrl+B</span></template>
+                <v-tooltip activator="parent" location="right" :disabled="!rail">Mở rộng thanh bên (Ctrl+B)</v-tooltip>
+              </v-list-item>
+            </template>
+          </div>
         </div>
       </v-list>
-
-      <!-- Theme Switcher & Collapse Toggle Footer -->
-      <template #append>
-        <div class="sidebar-footer-section pa-2 border-t">
-          <v-list density="compact" nav class="pa-0 mb-1">
-            <!-- Collapsed (Rail) Mode Theme Switcher -->
-            <v-menu v-if="!mobile && rail" transition="slide-x-transition" open-on-hover location="right">
-              <template #activator="{ props }">
-                <v-tooltip text="Đổi giao diện" location="right" open-delay="60" content-class="custom-nav-tooltip">
-                  <template #activator="{ props: tipProps }">
-                    <v-list-item
-                      prepend-icon="mdi-palette-outline"
-                      v-bind="{ ...props, ...tipProps }"
-                      rounded="xl"
-                      class="mb-1 nav-item"
-                    />
-                  </template>
-                  <span>Đổi giao diện</span>
-                </v-tooltip>
-              </template>
-              <v-list density="compact" rounded="xl" width="180" class="elevation-10 pa-2">
-                <v-list-item
-                  v-for="item in themeOptions"
-                  :key="item.id"
-                  @click="changeTheme(item.id)"
-                  :active="currentTheme === item.id"
-                  rounded="lg"
-                  class="mb-1"
-                >
-                  <template #prepend>
-                    <v-avatar size="18" :color="item.color" class="mr-2">
-                      <v-icon v-if="currentTheme === item.id" size="10" color="white">mdi-check</v-icon>
-                    </v-avatar>
-                  </template>
-                  <v-list-item-title class="font-weight-bold text-caption">{{ item.title }}</v-list-item-title>
-                </v-list-item>
-
-                <v-divider class="my-1" />
-
-                <v-list-item
-                  @click="resetToOriginalDefaults"
-                  rounded="lg"
-                  class="mb-1 text-error"
-                >
-                  <template #prepend>
-                    <v-avatar size="18" class="mr-2 border-sm bg-error-lighten-5">
-                      <v-icon size="10" color="error">mdi-refresh</v-icon>
-                    </v-avatar>
-                  </template>
-                  <v-list-item-title class="font-weight-bold text-caption text-error">Mặc định</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
-
-            <!-- Expanded Mode Theme Switcher -->
-            <v-list-item
-              v-else
-              prepend-icon="mdi-palette-outline"
-              title="Giao diện"
-              rounded="xl"
-              class="mb-1"
-            >
-              <template #append>
-                <div class="d-flex align-center ml-2" style="gap: 5px;">
-                  <v-tooltip v-for="item in themeOptions" :key="item.id" :text="item.title" location="top">
-                    <template #activator="{ props }">
-                      <v-avatar
-                        v-bind="props"
-                        size="18"
-                        class="cursor-pointer border-sm theme-color-dot"
-                        :style="{
-                          border: currentTheme === item.id ? '2px solid white' : '1px solid rgba(255,255,255,0.2)',
-                          boxShadow: currentTheme === item.id ? '0 0 6px ' + item.color : 'none',
-                          transform: currentTheme === item.id ? 'scale(1.15)' : 'none',
-                          transition: 'all 0.2s ease'
-                        }"
-                        :color="item.color"
-                        @click="changeTheme(item.id)"
-                      >
-                        <v-icon v-if="currentTheme === item.id" size="9" color="white">mdi-check</v-icon>
-                      </v-avatar>
-                    </template>
-                  </v-tooltip>
-                </div>
-              </template>
-            </v-list-item>
-          </v-list>
-
-          <!-- Sidebar Collapse Toggle Button -->
-          <v-list v-if="!mobile" density="compact" nav class="pa-0">
-            <v-tooltip
-              v-if="rail"
-              text="Mở rộng thanh bên (Ctrl+B)"
-              location="right"
-              open-delay="60"
-              content-class="custom-nav-tooltip"
-            >
-              <template #activator="{ props: tipProps }">
-                <v-list-item
-                  v-bind="tipProps"
-                  prepend-icon="mdi-chevron-double-right"
-                  @click.stop="rail = false"
-                  rounded="xl"
-                  class="nav-collapse-btn"
-                />
-              </template>
-              <span>Mở rộng thanh bên (Ctrl+B)</span>
-            </v-tooltip>
-            <v-list-item
-              v-else
-              prepend-icon="mdi-chevron-double-left"
-              title="Thu gọn thanh bên"
-              @click.stop="rail = true"
-              rounded="xl"
-              class="nav-collapse-btn"
-            >
-              <template #append>
-                <span class="text-caption text-medium-emphasis font-weight-medium px-1 py-0.5 rounded border" style="font-size: 0.65rem !important;">
-                  Ctrl+B
-                </span>
-              </template>
-            </v-list-item>
-          </v-list>
-        </div>
-      </template>
     </v-navigation-drawer>
 
     <!-- Main content -->
     <v-main>
-      <v-container fluid>
+      <v-container fluid class="crm-content" :class="{ 'crm-content--chat': route.path === '/chat' }">
         <slot />
       </v-container>
     </v-main>
@@ -456,16 +332,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { CUSTOMER_STATUS_LIST } from '@/constants/customer-statuses';
 import { useTheme, useDisplay } from 'vuetify';
 import { useAuthStore } from '@/stores/auth';
 import { useRouter, useRoute } from 'vue-router';
 import NotificationBell from '@/components/NotificationBell.vue';
-import GlobalSearch from '@/components/GlobalSearch.vue';
 import { useZaloAccounts } from '@/composables/use-zalo-accounts';
 import { io } from 'socket.io-client';
 import { api } from '@/api/index';
-import defaultLogo from '@/assets/logo_default.png';
+import defaultLogo from '@/assets/logo_only.png';
 
 const theme = useTheme();
 const { mobile } = useDisplay();
@@ -474,11 +350,12 @@ const router = useRouter();
 const route = useRoute();
 
 function isMenuItemActive(item: MenuItem): boolean {
+  if (item.path === '/chat?mode=unread' && route.path === '/chat' && route.query.tab === 'unread') return true;
   if (item.path.includes('?')) {
-    return route.fullPath === item.path;
+    return route.path === item.path.split('?')[0] && [...new URLSearchParams(item.path.split('?')[1]).entries()].every(([key, value]) => route.query[key] === value);
   }
   if (item.path === '/chat') {
-    return route.path === '/chat' && !route.query.mode;
+    return route.path === '/chat' && !route.query.mode && !route.query.accountId && !route.query.category && !route.query.status && route.query.tab !== 'unread';
   }
   return route.path === item.path;
 }
@@ -489,11 +366,29 @@ function navigateTo(path: string) {
 }
 
 const drawer = ref(true);
-const rail = ref(localStorage.getItem('crm-sidebar-rail') === 'true');
+// Mặc định là thu gọn sidebar (Image 1)
+const rail = ref(true);
+let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
-watch(rail, (newVal) => {
-  localStorage.setItem('crm-sidebar-rail', String(newVal));
-});
+function onSidebarMouseEnter() {
+  if (mobile.value) return;
+  if (collapseTimer) {
+    clearTimeout(collapseTimer);
+    collapseTimer = null;
+  }
+  rail.value = false;
+}
+
+function onSidebarMouseLeave() {
+  if (mobile.value) return;
+  if (collapseTimer) {
+    clearTimeout(collapseTimer);
+  }
+  collapseTimer = setTimeout(() => {
+    rail.value = true;
+    collapseTimer = null;
+  }, 3000);
+}
 
 function toggleSidebar() {
   if (mobile.value) {
@@ -690,19 +585,19 @@ function showLocalNotification(title: string, body: string, conversationId: stri
 
 
 // Multi-theme reactive states
-const currentTheme = ref(localStorage.getItem('crm-theme') || 'dark-obsidian');
+const currentTheme = ref(localStorage.getItem('crm-theme') || 'light-apple');
 const isDark = ref(currentTheme.value !== 'light-apple');
 
 const themeOptions = [
-  { id: 'emerald-care', title: 'Emerald Care', color: '#00B074' },
-  { id: 'dark-obsidian', title: 'Obsidian Tech', color: '#00F2FF' },
-  { id: 'light-apple', title: 'Apple Light', color: '#09090B' },
+  { id: 'emerald-care', title: 'Ngọc lục bảo', color: '#72B99A' },
+  { id: 'dark-obsidian', title: 'Xanh đá trầm', color: '#8CBAC4' },
+  { id: 'light-apple', title: 'Sáng thanh lịch', color: '#1D5140' },
 ];
 
 function resetToOriginalDefaults() {
   localStorage.removeItem('crm-custom-color');
-  localStorage.setItem('crm-theme', 'dark-obsidian');
-  currentTheme.value = 'dark-obsidian';
+  localStorage.setItem('crm-theme', 'light-apple');
+  currentTheme.value = 'light-apple';
   
   clearCustomColorStyles();
 
@@ -712,11 +607,11 @@ function resetToOriginalDefaults() {
   resetThemeDefaults('light-apple');
   
   // Apply theme
-  theme.global.name.value = 'dark-obsidian';
-  isDark.value = true;
-  localStorage.setItem('theme', 'dark');
+  theme.global.name.value = 'light-apple';
+  isDark.value = false;
+  localStorage.setItem('theme', 'light');
   
-  applyGradientVariables('dark-obsidian');
+  applyGradientVariables('light-apple');
 }
 
 function clearCustomColorStyles() {
@@ -731,31 +626,31 @@ function clearCustomColorStyles() {
 
 const defaultColors: Record<string, Record<string, string>> = {
   'emerald-care': {
-    background: '#021a0e',
-    surface: '#042c17',
-    'surface-variant': '#063c20',
-    'surface-light': '#0a542d',
-    primary: '#00B074',
-    secondary: '#044523',
-    accent: '#00B074',
+    background: '#101E1B',
+    surface: '#182B26',
+    'surface-variant': '#233B33',
+    'surface-light': '#304A40',
+    primary: '#72B99A',
+    secondary: '#A6B6AD',
+    accent: '#72B99A',
   },
   'dark-obsidian': {
-    background: '#0A192F',
-    surface: '#112240',
-    'surface-variant': '#172A45',
-    'surface-light': '#203756',
-    primary: '#00F2FF',
-    secondary: '#0084FF',
-    accent: '#00F2FF',
+    background: '#111C24',
+    surface: '#1A2933',
+    'surface-variant': '#253742',
+    'surface-light': '#314652',
+    primary: '#8CBAC4',
+    secondary: '#9DAFBD',
+    accent: '#8CBAC4',
   },
   'light-apple': {
-    background: '#F4F4F5',
+    background: '#F5F5F1',
     surface: '#FFFFFF',
-    'surface-variant': '#E4E4E7',
-    'surface-light': '#D4D4D8',
-    primary: '#09090B',
-    secondary: '#71717A',
-    accent: '#09090B',
+    'surface-variant': '#E9ECE7',
+    'surface-light': '#D9DFD8',
+    primary: '#1D5140',
+    secondary: '#67756D',
+    accent: '#1D5140',
   }
 };
 
@@ -808,6 +703,18 @@ const orgLogo = ref<string | null>(null);
 const orgName = ref('ZaloCRM');
 
 const { accounts, fetchAccounts, setupSocket } = useZaloAccounts();
+const unreadCount = ref(0);
+const systemExpanded = ref(false);
+const overviewExpanded = ref(false);
+const sidebarAccountId = computed(() => typeof route.query.accountId === 'string' ? route.query.accountId : null);
+function selectSidebarAccount(accountId: string | null) {
+  const { accountId: _account, convId: _conv, action: _action, ...query } = route.path === '/chat' ? route.query : {};
+  router.push({ path: '/chat', query: accountId ? { ...query, accountId } : query });
+  handleMenuClick();
+}
+function menuBadge(item: MenuItem) {
+  return item.badge === 'unread' ? unreadCount.value : item.badge === 'tracked' ? trackedCount.value : 0;
+}
 const taskCount = ref(0);
 const trackedCount = ref(0);
 let globalSocket: any = null;
@@ -826,7 +733,7 @@ function updateFavicon(logoUrl: string | null) {
     link.rel = 'icon';
     document.head.appendChild(link);
   }
-  link.href = logoUrl || '/favicon.svg';
+  link.href = logoUrl || '/logo_only.png';
 }
 
 async function fetchOrgInfo() {
@@ -845,7 +752,8 @@ async function fetchOrgInfo() {
 
 async function fetchTaskCount() {
   try {
-    const res = await api.get('/conversations/uncompleted');
+    const [res, unread] = await Promise.all([api.get('/conversations/uncompleted'), api.get('/conversations', { params: { unreadOnly: 'true', limit: 1 } })]);
+    unreadCount.value = unread.data.total || 0;
     taskCount.value = res.data.conversations?.length || 0;
     trackedCount.value = res.data.trackedCount || 0;
     
@@ -1001,6 +909,8 @@ onMounted(() => {
     if (soundEnabled.value) playLayoutNotificationSound();
   });
 
+  window.addEventListener('crm:accounts-changed', fetchAccounts);
+  window.addEventListener('crm:unread-changed', fetchTaskCount);
   globalSocket.on('conversation:quote-update', () => {
     fetchTaskCount();
   });
@@ -1012,7 +922,13 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (collapseTimer) {
+    clearTimeout(collapseTimer);
+    collapseTimer = null;
+  }
   window.removeEventListener('keydown', handleKeydown);
+  window.removeEventListener('crm:accounts-changed', fetchAccounts);
+  window.removeEventListener('crm:unread-changed', fetchTaskCount);
   if (globalSocket) {
     globalSocket.disconnect();
   }
@@ -1022,9 +938,11 @@ interface MenuItem {
   title: string;
   icon: string;
   path: string;
-  badge?: 'tasks' | 'tracked';
+  badge?: 'unread' | 'tracked';
   adminOnly?: boolean;
   allowedForAccountant?: boolean;
+  categoryColor?: string;
+  color?: string;
 }
 
 interface MenuGroup {
@@ -1032,33 +950,45 @@ interface MenuGroup {
   items: MenuItem[];
 }
 
+const userAvatarUrl = computed(() => {
+  return authStore.user?.avatarUrl || accounts.value[0]?.avatarUrl || '';
+});
+
 const menuGroups: MenuGroup[] = [
   {
     title: 'Tổng quan',
     items: [
-      { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', path: '/dashboard', allowedForAccountant: true },
-      { title: 'Báo cáo', icon: 'mdi-chart-arc', path: '/reports', allowedForAccountant: true },
+      { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', path: '/dashboard', color: '#10B981', allowedForAccountant: true },
+      { title: 'Báo cáo', icon: 'mdi-chart-arc', path: '/reports', color: '#8B5CF6', allowedForAccountant: true },
     ],
   },
   {
     title: 'Kinh doanh & CSKH',
     items: [
-      { title: 'Tin nhắn', icon: 'mdi-message-text-outline', path: '/chat', allowedForAccountant: true },
-      { title: 'Việc cần xử lý', icon: 'mdi-clipboard-text-play-outline', path: '/chat?mode=tasks', badge: 'tasks', allowedForAccountant: false },
-      { title: 'Đơn hàng đang theo dõi', icon: 'mdi-clipboard-text-clock-outline', path: '/chat?mode=tracked', badge: 'tracked', allowedForAccountant: true },
-      { title: 'Khách hàng', icon: 'mdi-account-group-outline', path: '/contacts', allowedForAccountant: true },
-      { title: 'Kho hình ảnh', icon: 'mdi-image-multiple-outline', path: '/media', allowedForAccountant: true },
-      { title: 'Lịch hẹn', icon: 'mdi-calendar-clock-outline', path: '/appointments', allowedForAccountant: false },
-      { title: 'Đơn hàng', icon: 'mdi-cart-outline', path: '/orders', allowedForAccountant: true },
-      { title: 'Tài khoản Zalo', icon: 'mdi-cellphone-link', path: '/zalo-accounts', allowedForAccountant: false },
+      { title: 'Tất cả hội thoại', icon: 'mdi-message-text-outline', path: '/chat', color: '#059669', allowedForAccountant: true },
+      { title: 'Danh bạ KH', icon: 'mdi-account-group-outline', path: '/contacts', color: '#2563EB', allowedForAccountant: true },
+      { title: 'Kho hình ảnh', icon: 'mdi-image-multiple-outline', path: '/media', color: '#EC4899', allowedForAccountant: true },
+      { title: 'Catalog', icon: 'mdi-book-open-page-variant-outline', path: '/catalog', color: '#D97706', allowedForAccountant: true },
+      { title: 'Lịch hẹn', icon: 'mdi-calendar-clock-outline', path: '/appointments', color: '#7C3AED', allowedForAccountant: false },
+      { title: 'Đơn hàng', icon: 'mdi-cart-outline', path: '/orders', color: '#EA580C', allowedForAccountant: true },
     ],
+  },
+  {
+    title: 'Trạng thái',
+    items: CUSTOMER_STATUS_LIST.map(status => ({
+      title: status.label,
+      icon: status.icon,
+      path: '/chat?status=' + encodeURIComponent(status.id),
+      categoryColor: status.color,
+      allowedForAccountant: true,
+    })),
   },
   {
     title: 'Hệ thống',
     items: [
-      { title: 'Chấm công', icon: 'mdi-clock-check-outline', path: '/attendance', allowedForAccountant: true },
-      { title: 'Nhân viên', icon: 'mdi-account-cog-outline', path: '/settings', adminOnly: true, allowedForAccountant: false },
-      { title: 'API & Webhook', icon: 'mdi-api', path: '/api-settings', adminOnly: true, allowedForAccountant: false },
+      { title: 'Chấm công', icon: 'mdi-clock-check-outline', path: '/attendance', color: '#0D9488', allowedForAccountant: true },
+      { title: 'Nhân viên', icon: 'mdi-account-cog-outline', path: '/settings', color: '#64748B', adminOnly: true, allowedForAccountant: false },
+      { title: 'API & Webhook', icon: 'mdi-api', path: '/api-settings', color: '#0284C7', adminOnly: true, allowedForAccountant: false },
     ],
   },
 ];
@@ -1146,5 +1076,129 @@ function goToZaloAccounts() {
 }
 .sidebar-footer-section {
   border-color: rgba(var(--v-theme-on-surface), 0.08) !important;
+}
+.account-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 9px;
+  object-fit: cover;
+  display: block;
+}
+.user-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Sidebar compact optimizations: remove wide spacer & shift text close to icon */
+.custom-app-sidebar :deep(.v-list-item__spacer),
+.sidebar-navigation :deep(.v-list-item__spacer) {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+}
+
+/* Di chuyển text qua phải một chút và căn đều cân đối 2 bên (Image 2) */
+.sidebar-navigation :deep(.v-list-item__prepend) {
+  margin-inline-end: 14px !important;
+}
+.sidebar-navigation :deep(.v-list-item__prepend > .v-icon) {
+  margin: 0 !important;
+}
+.sidebar-navigation :deep(.v-list-item) {
+  padding-inline-start: 14px !important;
+  padding-inline-end: 12px !important;
+  padding-block: 4px !important;
+  min-height: 38px !important;
+  margin-bottom: 3px !important;
+  border-radius: 9px !important;
+}
+.sidebar-navigation :deep(.v-list-item-title) {
+  font-size: 0.855rem !important;
+  letter-spacing: -0.1px !important;
+  white-space: nowrap !important;
+  padding-left: 2px !important;
+}
+
+.custom-app-sidebar .connections-heading {
+  padding: 6px 12px 4px 12px !important;
+  min-height: 30px !important;
+}
+.custom-app-sidebar .connected-accounts {
+  padding-bottom: 4px !important;
+}
+.custom-app-sidebar .account-list :deep(.v-list-item) {
+  padding-inline: 10px !important;
+  min-height: 36px !important;
+}
+.custom-app-sidebar .system-group-toggle {
+  padding: 6px 12px !important;
+  min-height: 32px !important;
+  border-radius: 8px !important;
+}
+
+/* ── Rail Mode: Kích thước cân đối, vừa vặn để luôn thấy icon Cài đặt ở đáy ── */
+.v-navigation-drawer--rail .connected-accounts {
+  padding-bottom: 2px !important;
+  margin-bottom: 2px !important;
+}
+.v-navigation-drawer--rail .connections-heading {
+  padding: 4px 6px 2px !important;
+  min-height: 24px !important;
+}
+.v-navigation-drawer--rail .account-list :deep(.v-list-item) {
+  min-height: 38px !important;
+  margin-bottom: 5px !important;
+}
+.v-navigation-drawer--rail .sidebar-navigation {
+  padding-top: 6px !important;
+  padding-bottom: 8px !important;
+  padding-inline: 6px !important;
+}
+.v-navigation-drawer--rail .sidebar-navigation div.mb-2 {
+  margin-bottom: 3px !important;
+}
+.v-navigation-drawer--rail .sidebar-navigation :deep(.v-list-item) {
+  min-height: 40px !important;
+  margin-bottom: 5px !important;
+  margin-inline: 4px !important;
+  padding-inline: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 11px !important;
+}
+.v-navigation-drawer--rail .sidebar-navigation :deep(.v-list-item__prepend) {
+  margin-inline-end: 0 !important;
+}
+.v-navigation-drawer--rail .sidebar-navigation :deep(.v-list-item__prepend > .v-icon) {
+  font-size: 21px !important;
+}
+.v-navigation-drawer--rail .system-group-toggle {
+  min-height: 38px !important;
+  margin-bottom: 5px !important;
+  margin-inline: 4px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 10px !important;
+}
+.v-navigation-drawer--rail .v-divider {
+  margin-block: 6px !important;
+  margin-inline: 6px !important;
+}
+.custom-app-sidebar :deep(.v-navigation-drawer__content) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--v-theme-primary), 0.2) transparent;
+}
+.custom-app-sidebar :deep(.v-navigation-drawer__content::-webkit-scrollbar) {
+  width: 4px;
+}
+.custom-app-sidebar :deep(.v-navigation-drawer__content::-webkit-scrollbar-thumb) {
+  background: rgba(var(--v-theme-primary), 0.2);
+  border-radius: 4px;
 }
 </style>

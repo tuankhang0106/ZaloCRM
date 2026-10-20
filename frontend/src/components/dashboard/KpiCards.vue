@@ -1,11 +1,11 @@
 <template>
   <v-row>
     <v-col v-for="card in cards" :key="card.title" cols="6" sm="4" md="2">
-      <v-card variant="outlined">
+      <v-card variant="outlined" class="kpi-card">
         <v-card-text class="text-center pa-3">
-          <v-icon :icon="card.icon" :color="card.color" size="32" class="mb-1" />
-          <div class="text-h5 font-weight-bold">{{ card.value }}</div>
-          <div class="text-caption text-grey">{{ card.title }}</div>
+          <div class="kpi-icon"><v-icon :icon="card.icon" :color="card.color" size="19" /></div>
+          <div class="kpi-value">{{ card.value }}</div>
+          <div class="kpi-label">{{ card.title }}</div>
         </v-card-text>
       </v-card>
     </v-col>

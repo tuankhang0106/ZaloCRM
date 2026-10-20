@@ -17,10 +17,10 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5174,
     proxy: {
-      '/api': 'http://127.0.0.1:3000',
-      '/uploads': 'http://127.0.0.1:3000',
+      '/api': 'http://127.0.0.1:3080',
+      '/uploads': 'http://127.0.0.1:3080',
       '/socket.io': {
-        target: 'http://127.0.0.1:3000',
+        target: 'http://127.0.0.1:3080',
         ws: true,
       },
     },

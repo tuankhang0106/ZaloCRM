@@ -39,6 +39,7 @@
     "socket.io": "^4.8.3",
     "uuid": "^13.0.0",
     "web-push": "^3.6.7",
+    "zalo-api-final": "^2.1.1",
     "zca-js": "^2.1.2"
   },
   "devDependencies": {

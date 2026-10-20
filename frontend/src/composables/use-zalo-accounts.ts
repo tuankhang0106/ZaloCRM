@@ -14,6 +14,7 @@ export interface ZaloAccount {
   status: string;
   liveStatus?: string;
   phone: string | null;
+  avatarUrl?: string | null;
   sessionData: any;
   ownerUserId: string;
   createdAt: string;
@@ -69,6 +70,7 @@ export function useZaloAccounts() {
     try {
       await api.post('/zalo-accounts', { displayName: displayName || undefined });
       await fetchAccounts();
+      window.dispatchEvent(new Event('crm:accounts-changed'));
       return true;
     } catch (err: any) {
       console.error('Failed to add account:', err);
@@ -97,6 +99,7 @@ export function useZaloAccounts() {
     try {
       await api.post(`/zalo-accounts/${accountId}/reconnect`);
       await fetchAccounts();
+      window.dispatchEvent(new Event('crm:accounts-changed'));
     } catch (err: any) {
       console.error('Reconnect failed:', err);
     }
@@ -106,6 +109,7 @@ export function useZaloAccounts() {
     try {
       await api.post(`/zalo-accounts/${accountId}/disconnect`);
       await fetchAccounts();
+      window.dispatchEvent(new Event('crm:accounts-changed'));
       return true;
     } catch (err: any) {
       console.error('Disconnect failed:', err);
@@ -130,6 +134,7 @@ export function useZaloAccounts() {
         params: { purge: purge ? 'true' : 'false' },
       });
       await fetchAccounts();
+      window.dispatchEvent(new Event('crm:accounts-changed'));
       return true;
     } catch (err: any) {
       console.error('Delete failed:', err);

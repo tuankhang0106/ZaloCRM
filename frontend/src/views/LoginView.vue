@@ -1,7 +1,7 @@
 <template>
-  <v-card class="pa-8" style="background: rgba(4, 44, 23, 0.7) !important; border: 1px solid rgba(0, 176, 116, 0.15) !important; backdrop-filter: blur(20px);" elevation="0">
+  <v-card class="pa-8 login-card" elevation="0">
     <div class="text-center mb-8">
-      <v-img :src="orgLogo || defaultLogo" alt="Logo" width="110" height="110" class="mx-auto mb-4" contain />
+      <v-img :src="orgLogo || defaultLogo" alt="Logo" width="64" height="64" class="mx-auto mb-4" contain />
       <h1 class="text-h5 font-weight-bold">
         <template v-if="orgName === 'ZaloCRM'">
           Zalo<span style="color: #00B074;">CRM</span>
@@ -10,14 +10,15 @@
           {{ orgName }}
         </template>
       </h1>
-      <p class="text-caption mt-1" style="color: #8892b0;">Liquid Silicon • Multi-Account Zalo Management</p>
+      <p class="text-medium-emphasis text-caption mt-1">Quản lý kết nối. Chăm sóc tận tâm.</p>
     </div>
 
+    <div class="login-heading"><h2>Chào mừng trở lại</h2><p>Đăng nhập để tiếp tục công việc của bạn.</p></div>
     <v-form @submit.prevent="handleLogin">
       <v-text-field
         v-model="email"
         label="Email"
-        type="email"
+        type="email" autocomplete="username"
         prepend-inner-icon="mdi-email-outline"
         required
         class="mb-3"
@@ -25,12 +26,12 @@
       <v-text-field
         v-model="password"
         label="Mật khẩu"
-        type="password"
+        type="password" autocomplete="current-password"
         prepend-inner-icon="mdi-lock-outline"
         required
         class="mb-5"
       />
-      <v-btn type="submit" color="#00B074" block size="large" :loading="loading" rounded="xl" style="color: white !important;">
+      <v-btn type="submit" color="primary" block size="large" :loading="loading" rounded="xl" style="color: white !important;">
         <v-icon start>mdi-login</v-icon>
         Đăng nhập
       </v-btn>
@@ -82,7 +83,7 @@ function updateFavicon(logoUrl: string | null) {
     link.rel = 'icon';
     document.head.appendChild(link);
   }
-  link.href = logoUrl || '/favicon.svg';
+  link.href = logoUrl || '/logo_only.png';
   
   if (orgName.value && orgName.value !== 'ZaloCRM') {
     document.title = `${orgName.value} - Đăng nhập`;
@@ -123,19 +124,3 @@ async function handleLogin() {
   }
 }
 </script>
-
-<style scoped>
-:deep(.v-field--focused) {
-  --v-field-border-color: #00B074 !important;
-  color: #00B074 !important;
-}
-:deep(.v-label.v-field-label--active) {
-  color: #00B074 !important;
-}
-:deep(.v-field__input) {
-  color: #e2ebe7 !important;
-}
-:deep(.v-field) {
-  background: rgba(2, 26, 14, 0.5) !important;
-}
-</style>

@@ -9,6 +9,7 @@ interface User {
   role: string;
   orgId: string;
   orgName: string;
+  avatarUrl?: string | null;
 }
 
 export const useAuthStore = defineStore('auth', () => {

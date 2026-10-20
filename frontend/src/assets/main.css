@@ -172,14 +172,33 @@ html, body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
 }
 
-/* Timestamp inside self bubble */
-.msg-time-self {
-  color: rgba(255, 255, 255, 0.85);
+/* Image & Contact Card bubble overrides for staff (borderless, transparent) */
+.message-bubble.staff-bubble.image-bubble-self,
+.message-bubble.staff-bubble.contact-bubble-self,
+.v-theme--emerald-care .message-bubble.staff-bubble.image-bubble-self,
+.v-theme--emerald-care .message-bubble.staff-bubble.contact-bubble-self,
+.v-theme--dark-obsidian .message-bubble.staff-bubble.image-bubble-self,
+.v-theme--dark-obsidian .message-bubble.staff-bubble.contact-bubble-self,
+.v-theme--dark-charcoal .message-bubble.staff-bubble.image-bubble-self,
+.v-theme--dark-charcoal .message-bubble.staff-bubble.contact-bubble-self,
+.v-theme--light .message-bubble.staff-bubble.image-bubble-self,
+.v-theme--light .message-bubble.staff-bubble.contact-bubble-self,
+.v-theme--light-apple .message-bubble.staff-bubble.image-bubble-self,
+.v-theme--light-apple .message-bubble.staff-bubble.contact-bubble-self {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0 !important;
 }
 
-.v-theme--light .msg-time-self,
-.v-theme--light-apple .msg-time-self {
-  color: #52525B !important;
+/* Timestamp inside self bubble */
+.msg-time-self {
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+
+.message-bubble.staff-bubble.image-bubble-self .msg-time-self,
+.message-bubble.staff-bubble.contact-bubble-self .msg-time-self {
+  color: rgba(var(--v-theme-on-surface), 0.72) !important;
 }
 
 /* Received messages (customer / contact) - left aligned */

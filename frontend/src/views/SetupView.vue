@@ -40,7 +40,11 @@ async function handleSetup() {
     success.value = true;
     setTimeout(() => router.push('/'), 1000);
   } catch (err: any) {
-    error.value = err.response?.data?.error || 'Thiết lập thất bại';
+    const msg = err.response?.data?.message || err.response?.data?.error || 'Thiết lập thất bại';
+    error.value = msg === 'Setup already completed' ? 'Hệ thống đã được thiết lập! Đang chuyển đến trang đăng nhập...' : msg;
+    if (msg === 'Setup already completed') {
+      setTimeout(() => router.push('/login'), 1200);
+    }
   } finally {
     loading.value = false;
   }

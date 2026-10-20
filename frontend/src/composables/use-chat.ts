@@ -86,6 +86,7 @@ export interface Message {
   isDeleted: boolean;
   zaloMsgId: string | null;
   attachments?: any;
+  metadata?: any;
   repliedBy?: {
     id: string;
     fullName: string;
@@ -102,6 +103,10 @@ export function useChat() {
   const sendingMsg = ref(false);
   const searchQuery = ref('');
   const accountFilter = ref<string | null>(null);
+  const threadTypeFilter = ref<'user' | 'group' | null>(null);
+  const categoryFilter = ref<string | null>(null);
+  const statusFilter = ref<string | null>(null);
+  const unreadMode = ref(false);
   const tasksMode = ref(false);
   const trackedMode = ref(false);
   watch(selectedConvId, (newId) => {
@@ -126,6 +131,10 @@ export function useChat() {
           limit: 100,
           search: searchQuery.value,
           accountId: accountFilter.value || undefined,
+          threadType: threadTypeFilter.value || undefined,
+          category: categoryFilter.value || undefined,
+          status: statusFilter.value || undefined,
+          unreadOnly: unreadMode.value ? 'true' : undefined,
           uncompletedOnly: tasksMode.value ? 'true' : (trackedMode.value ? 'tracked' : undefined)
         },
       });
@@ -155,6 +164,7 @@ export function useChat() {
       await api.post(`/conversations/${convId}/mark-read`);
       const conv = conversations.value.find(c => c.id === convId);
       if (conv) conv.unreadCount = 0;
+      window.dispatchEvent(new Event('crm:unread-changed'));
     } catch {
       // Ignore mark-read errors
     }
@@ -227,12 +237,15 @@ export function useChat() {
     return res.data;
   }
 
-  async function sendFile(file: File) {
+  async function sendFile(file: File, caption?: string) {
     if (!selectedConvId.value) return;
     sendingMsg.value = true;
     try {
       const formData = new FormData();
       formData.append('file', file);
+      if (caption && caption.trim()) {
+        formData.append('content', caption.trim());
+      }
       const res = await api.post(`/conversations/${selectedConvId.value}/messages`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -241,7 +254,12 @@ export function useChat() {
       if (file.type.startsWith('image/')) {
         const localPreview = URL.createObjectURL(file);
         if (!res.data.content || res.data.content.includes('"href":""')) {
-          res.data.content = JSON.stringify({ href: localPreview, thumb: localPreview, hdUrl: localPreview });
+          res.data.content = JSON.stringify({
+            href: localPreview,
+            thumb: localPreview,
+            hdUrl: localPreview,
+            ...(caption?.trim() ? { title: caption.trim(), caption: caption.trim() } : {}),
+          });
         }
       }
       const exists = messages.value.find(m => 
@@ -321,6 +339,49 @@ export function useChat() {
       if (idx !== -1) {
         messages.value.splice(idx, 1);
       }
+    });
+
+    socket.on('chat:reaction', (data: {
+      accountId?: string;
+      messageId?: string;
+      zaloMsgId?: string;
+      conversationId?: string;
+      reaction: string | null;
+      icon?: string;
+      senderUid?: string;
+      isSelf?: boolean;
+    }) => {
+      const msg = messages.value.find(m =>
+        (data.messageId && m.id === data.messageId) ||
+        (data.zaloMsgId && m.zaloMsgId === data.zaloMsgId)
+      );
+
+      if (msg) {
+        let attList: any[] = [];
+        if (msg.attachments) {
+          if (typeof msg.attachments === 'string') {
+            try { attList = JSON.parse(msg.attachments); } catch { attList = []; }
+          } else if (Array.isArray(msg.attachments)) {
+            attList = [...msg.attachments];
+          } else if (typeof msg.attachments === 'object') {
+            attList = [msg.attachments];
+          }
+        }
+
+        attList = attList.filter((a: any) => a && a.type !== 'reaction');
+        if (data.reaction) {
+          attList.push({
+            type: 'reaction',
+            reaction: data.reaction,
+            icon: data.icon,
+            senderUid: data.senderUid,
+            isSelf: data.isSelf,
+          });
+        }
+        msg.attachments = attList;
+      }
+
+      window.dispatchEvent(new CustomEvent('crm:message-reaction', { detail: data }));
     });
 
     socket.on('conversation:quote-update', (data: { conversationId: string; isCustomer: boolean; quoteCompleted: boolean; quoteCompletedByName?: string | null }) => {
@@ -462,6 +523,10 @@ export function useChat() {
     sendingMsg,
     searchQuery,
     accountFilter,
+    threadTypeFilter,
+    categoryFilter,
+    statusFilter,
+    unreadMode,
     tasksMode,
     trackedMode,
     fetchConversations,
