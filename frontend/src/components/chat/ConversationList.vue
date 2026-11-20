@@ -26,62 +26,49 @@
         <v-tab value="personal">Cá nhân</v-tab>
         <v-tab value="group">Nhóm</v-tab>
       </v-tabs>
-      <!-- Sub-filter row: Khách hàng vs Nhà cung cấp -->
-      <div class="conv-role-filter-row d-flex align-center px-3 py-1.5" style="gap: 6px; background: rgba(var(--v-theme-surface), 0.95); border-top: 1px solid rgba(var(--v-border-color), 0.08); border-bottom: 1px solid rgba(var(--v-border-color), 0.12);">
-        <button
-          type="button"
-          class="conv-role-chip"
-          :style="{
-            padding: '2px 10px',
-            fontSize: '11px',
-            borderRadius: '12px',
-            cursor: 'pointer',
-            transition: 'all 0.15s ease',
-            border: '1px solid',
-            ...(roleFilter === 'all'
-              ? { background: 'rgba(var(--v-theme-primary), 0.15)', color: 'rgb(var(--v-theme-primary))', borderColor: 'rgba(var(--v-theme-primary), 0.4)', fontWeight: '700' }
-              : { background: 'transparent', color: 'rgba(var(--v-theme-on-surface), 0.6)', borderColor: 'rgba(var(--v-border-color), 0.25)', fontWeight: '500' })
-          }"
-          @click="roleFilter = 'all'"
-        >
-          Tất cả
-        </button>
-        <button
-          type="button"
-          class="conv-role-chip"
-          :style="{
-            padding: '2px 10px',
-            fontSize: '11px',
-            borderRadius: '12px',
-            cursor: 'pointer',
-            transition: 'all 0.15s ease',
-            border: '1px solid',
-            ...(roleFilter === 'customer'
-              ? { background: '#E8F8EE', color: '#007A3D', borderColor: '#10B981', fontWeight: '700', boxShadow: '0 1px 3px rgba(16,185,129,0.2)' }
-              : { background: 'transparent', color: '#007A3D', borderColor: 'rgba(0,122,61,0.25)', fontWeight: '500' })
-          }"
-          @click="roleFilter = roleFilter === 'customer' ? 'all' : 'customer'"
-        >
-          Khách hàng
-        </button>
-        <button
-          type="button"
-          class="conv-role-chip"
-          :style="{
-            padding: '2px 10px',
-            fontSize: '11px',
-            borderRadius: '12px',
-            cursor: 'pointer',
-            transition: 'all 0.15s ease',
-            border: '1px solid',
-            ...(roleFilter === 'supplier'
-              ? { background: '#FFF4ED', color: '#EA580C', borderColor: '#F97316', fontWeight: '700', boxShadow: '0 1px 3px rgba(249,115,22,0.2)' }
-              : { background: 'transparent', color: '#EA580C', borderColor: 'rgba(234,88,12,0.25)', fontWeight: '500' })
-          }"
-          @click="roleFilter = roleFilter === 'supplier' ? 'all' : 'supplier'"
-        >
-          Nhà cung cấp
-        </button>
+      <!-- Sub-filter row: Pure text dropdown "Bộ lọc" (NO ICON, NO ▾) -->
+      <div class="conv-filter-bar d-flex align-center px-3 py-1" style="background: rgba(var(--v-theme-surface), 0.95); border-top: 1px solid rgba(var(--v-border-color), 0.08); border-bottom: 1px solid rgba(var(--v-border-color), 0.12);">
+        <v-menu location="bottom start" :close-on-content-click="true">
+          <template #activator="{ props: menuProps }">
+            <button
+              v-bind="menuProps"
+              type="button"
+              class="conv-filter-dropdown-btn"
+              :style="{
+                background: 'transparent',
+                border: 'none',
+                padding: '2px 0',
+                fontSize: '12px',
+                cursor: 'pointer',
+                fontWeight: roleFilter === 'all' ? '500' : '700',
+                color: roleFilter === 'customer' ? '#007A3D' : (roleFilter === 'supplier' ? '#EA580C' : (roleFilter === 'internal' ? '#475569' : (roleFilter === 'all' ? 'rgba(var(--v-theme-on-surface), 0.7)' : '#2563EB')))
+              }"
+            >
+              {{ roleFilter === 'all' ? 'Bộ lọc' : (roleFilter === 'customer' ? 'Khách hàng' : (roleFilter === 'supplier' ? 'Nhà cung cấp' : (roleFilter === 'internal' ? 'Nội bộ' : roleFilter))) }}
+            </button>
+          </template>
+          <v-list density="compact" rounded="lg" class="elevation-8 pa-1" min-width="180">
+            <v-list-item @click="roleFilter = 'all'" :active="roleFilter === 'all'" class="rounded">
+              <v-list-item-title class="text-body-2">Tất cả</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="roleFilter = 'customer'" :active="roleFilter === 'customer'" class="rounded">
+              <v-list-item-title class="text-body-2 font-weight-medium" style="color: #007A3D;">Khách hàng</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="roleFilter = 'supplier'" :active="roleFilter === 'supplier'" class="rounded">
+              <v-list-item-title class="text-body-2 font-weight-medium" style="color: #EA580C;">Nhà cung cấp</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="roleFilter = 'internal'" :active="roleFilter === 'internal'" class="rounded">
+              <v-list-item-title class="text-body-2 font-weight-medium" style="color: #475569;">Nội bộ</v-list-item-title>
+            </v-list-item>
+            <v-list-item v-for="tag in customTags" :key="tag" @click="roleFilter = tag" :active="roleFilter === tag" class="rounded">
+              <v-list-item-title class="text-body-2 font-weight-medium">{{ tag }}</v-list-item-title>
+            </v-list-item>
+            <v-divider class="my-1 opacity-20" />
+            <v-list-item @click="handleCreateTag" class="rounded">
+              <v-list-item-title class="text-body-2 text-primary font-weight-medium">+ Tạo nhãn mới</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
       </div>
     </div>
 
@@ -141,6 +128,13 @@
             style="background: #FFF4ED; color: #EA580C; border: 1px solid rgba(234,88,12,0.25); font-size: 10.5px; font-weight: 600; border-radius: 4px; padding: 1px 6px; line-height: 16px; white-space: nowrap; flex-shrink: 0; display: inline-block;"
           >
             Nhà cung cấp
+          </span>
+          <span
+            v-else-if="conv.contact?.tags?.includes('Nội bộ') || conv.contact?.tags?.includes('Nội bộ công ty')"
+            class="ml-1 conv-tag-nb"
+            style="background: #F1F5F9; color: #475569; border: 1px solid rgba(71,85,105,0.25); font-size: 10.5px; font-weight: 600; border-radius: 4px; padding: 1px 6px; line-height: 16px; white-space: nowrap; flex-shrink: 0; display: inline-block;"
+          >
+            Nội bộ
           </span>
           <v-chip v-if="conv.threadType === 'group'" size="x-small" color="info" variant="tonal" class="ml-1">Nhóm</v-chip>
           <v-icon v-if="conv.isCustomer" color="error" size="14" class="ml-1" title="Đang theo dõi nhóm">mdi-bell-ring</v-icon>
@@ -233,6 +227,16 @@
                     </template>
                   </v-list-item>
 
+                  <!-- Đánh dấu: Nội bộ -->
+                  <v-list-item @click.stop="toggleCategory(conv, 'Nội bộ công ty')" class="conv-menu-item rounded d-flex align-center justify-space-between">
+                    <v-list-item-title class="text-body-2 font-weight-medium" style="color: #475569;">
+                      Đánh dấu: Nội bộ
+                    </v-list-item-title>
+                    <template #append>
+                      <v-icon v-if="conv.contact?.tags?.includes('Nội bộ công ty') || conv.contact?.tags?.includes('Nội bộ')" icon="mdi-check" size="16" color="#475569" />
+                    </template>
+                  </v-list-item>
+
                   <!-- 2. Phân loại > -->
                   <v-menu location="end" open-on-hover :close-on-content-click="false">
                     <template #activator="{ props: catMenuProps }">
@@ -245,7 +249,7 @@
                     </template>
                     <v-list density="compact" rounded="lg" class="elevation-8 conv-context-menu pa-1" min-width="210">
                       <v-list-item
-                        v-for="cat in CONVERSATION_CATEGORIES"
+                        v-for="cat in allCategories"
                         :key="cat.title"
                         @click.stop="toggleCategory(conv, cat.title)"
                         class="conv-menu-item rounded"
@@ -256,12 +260,16 @@
                         <v-list-item-title class="text-body-2" style="font-size: 0.85rem;">{{ cat.title }}</v-list-item-title>
                         <template #append>
                           <v-icon
-                            v-if="conv.contact?.tags?.includes(cat.title) || (cat.title === 'KH quan trọng' && conv.contact?.tags?.includes('Khách hàng quan trọng'))"
+                            v-if="conv.contact?.tags?.includes(cat.title)"
                             icon="mdi-check"
                             size="16"
                             color="success"
                           />
                         </template>
+                      </v-list-item>
+                      <v-divider class="my-1 opacity-20" />
+                      <v-list-item @click.stop="handleCreateTag" class="conv-menu-item rounded">
+                        <v-list-item-title class="text-body-2 text-primary font-weight-medium">+ Tạo nhãn mới</v-list-item-title>
                       </v-list-item>
                     </v-list>
                   </v-menu>
@@ -701,7 +709,39 @@ const emit = defineEmits<{
 }>();
 
 const accountOptions = ref<{ text: string; value: string }[]>([]);
-const roleFilter = ref<'all' | 'customer' | 'supplier'>('all');
+const roleFilter = ref<string>('all');
+const customTags = ref<string[]>((() => {
+  try {
+    return JSON.parse(localStorage.getItem('crm:custom-tags') || '[]');
+  } catch {
+    return [];
+  }
+})());
+
+function addCustomTag(tagName: string) {
+  const t = tagName.trim();
+  if (!t || t === 'Khách hàng' || t === 'Nhà cung cấp' || t === 'Nội bộ' || t === 'Nội bộ công ty') return;
+  if (!customTags.value.includes(t)) {
+    customTags.value.push(t);
+    try {
+      localStorage.setItem('crm:custom-tags', JSON.stringify(customTags.value));
+    } catch {}
+  }
+}
+
+const allCategories = computed(() => [
+  ...CONVERSATION_CATEGORIES,
+  ...customTags.value.map(t => ({ title: t, icon: 'mdi-tag-outline', color: '#475569' }))
+]);
+
+function handleCreateTag() {
+  const name = prompt('Nhập tên nhãn mới:');
+  if (name && name.trim()) {
+    addCustomTag(name.trim());
+    roleFilter.value = name.trim();
+    snackbar.value = { show: true, text: `Đã tạo nhãn: ${name.trim()}`, color: 'success' };
+  }
+}
 const currentAccountName = computed(() => accountOptions.value.find(account => account.value === props.accountId)?.text || 'Tất cả Zalo');
 const selectedAccountId = ref<string | null>(props.accountId || null);
 watch(() => props.accountId, value => { selectedAccountId.value = value || null; });
@@ -953,15 +993,25 @@ async function toggleCategory(conv: Conversation, catTitle: string) {
   if (idx !== -1) {
     current.splice(idx, 1);
   } else {
-    // If tagging as Customer, remove Supplier tag if present (mutually exclusive)
+    // Mutual exclusivity between Khách hàng, Nhà cung cấp, Nội bộ
     if (catTitle === 'Khách hàng') {
       const suppIdx = current.indexOf('Nhà cung cấp');
       if (suppIdx !== -1) current.splice(suppIdx, 1);
+      const intIdx = current.indexOf('Nội bộ công ty');
+      if (intIdx !== -1) current.splice(intIdx, 1);
     } else if (catTitle === 'Nhà cung cấp') {
       const custIdx = current.indexOf('Khách hàng');
       if (custIdx !== -1) current.splice(custIdx, 1);
+      const intIdx = current.indexOf('Nội bộ công ty');
+      if (intIdx !== -1) current.splice(intIdx, 1);
+    } else if (catTitle === 'Nội bộ công ty' || catTitle === 'Nội bộ') {
+      const custIdx = current.indexOf('Khách hàng');
+      if (custIdx !== -1) current.splice(custIdx, 1);
+      const suppIdx = current.indexOf('Nhà cung cấp');
+      if (suppIdx !== -1) current.splice(suppIdx, 1);
     }
     current.push(catTitle);
+    addCustomTag(catTitle);
   }
   contact.tags = current;
 
@@ -1122,11 +1172,15 @@ const displayConversations = computed(() => {
     return !hiddenConversationIds.value.includes(c.id);
   });
 
-  // Filter by role: Khách hàng vs Nhà cung cấp
+  // Filter by role: Khách hàng vs Nhà cung cấp vs Nội bộ vs Nhãn tự tạo
   if (roleFilter.value === 'customer') {
     filtered = filtered.filter(c => c.contact?.tags?.includes('Khách hàng'));
   } else if (roleFilter.value === 'supplier') {
     filtered = filtered.filter(c => c.contact?.tags?.includes('Nhà cung cấp'));
+  } else if (roleFilter.value === 'internal') {
+    filtered = filtered.filter(c => c.contact?.tags?.includes('Nội bộ') || c.contact?.tags?.includes('Nội bộ công ty'));
+  } else if (roleFilter.value !== 'all') {
+    filtered = filtered.filter(c => c.contact?.tags?.includes(roleFilter.value));
   }
 
   const getDeliveryDays = (conv: Conversation): number => {

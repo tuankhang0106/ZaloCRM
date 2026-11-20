@@ -191,7 +191,7 @@
                 @click="toggleContactTag(cat.title)"
                 rounded="lg"
                 class="category-select-item mb-1 cursor-pointer"
-                :class="{ 'is-selected': currentContactTags.includes(cat.title) || (cat.title === 'KH quan trọng' && currentContactTags.includes('Khách hàng quan trọng')) }"
+                :class="{ 'is-selected': currentContactTags.includes(cat.title) }"
               >
                 <template #prepend>
                   <v-icon :icon="cat.icon" :style="{ color: cat.color }" size="18" class="mr-2.5" />
@@ -201,7 +201,7 @@
                 </v-list-item-title>
                 <template #append>
                   <v-icon
-                    v-if="currentContactTags.includes(cat.title) || (cat.title === 'KH quan trọng' && currentContactTags.includes('Khách hàng quan trọng'))"
+                    v-if="currentContactTags.includes(cat.title)"
                     icon="mdi-check-circle"
                     size="19"
                     color="#2E5C43"
