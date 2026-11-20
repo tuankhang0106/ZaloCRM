@@ -26,6 +26,63 @@
         <v-tab value="personal">Cá nhân</v-tab>
         <v-tab value="group">Nhóm</v-tab>
       </v-tabs>
+      <!-- Sub-filter row: Khách hàng vs Nhà cung cấp -->
+      <div class="conv-role-filter-row d-flex align-center px-3 py-1.5" style="gap: 6px; background: rgba(var(--v-theme-surface), 0.95); border-top: 1px solid rgba(var(--v-border-color), 0.08); border-bottom: 1px solid rgba(var(--v-border-color), 0.12);">
+        <button
+          type="button"
+          class="conv-role-chip"
+          :style="{
+            padding: '2px 10px',
+            fontSize: '11px',
+            borderRadius: '12px',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            border: '1px solid',
+            ...(roleFilter === 'all'
+              ? { background: 'rgba(var(--v-theme-primary), 0.15)', color: 'rgb(var(--v-theme-primary))', borderColor: 'rgba(var(--v-theme-primary), 0.4)', fontWeight: '700' }
+              : { background: 'transparent', color: 'rgba(var(--v-theme-on-surface), 0.6)', borderColor: 'rgba(var(--v-border-color), 0.25)', fontWeight: '500' })
+          }"
+          @click="roleFilter = 'all'"
+        >
+          Tất cả
+        </button>
+        <button
+          type="button"
+          class="conv-role-chip"
+          :style="{
+            padding: '2px 10px',
+            fontSize: '11px',
+            borderRadius: '12px',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            border: '1px solid',
+            ...(roleFilter === 'customer'
+              ? { background: '#E8F8EE', color: '#007A3D', borderColor: '#10B981', fontWeight: '700', boxShadow: '0 1px 3px rgba(16,185,129,0.2)' }
+              : { background: 'transparent', color: '#007A3D', borderColor: 'rgba(0,122,61,0.25)', fontWeight: '500' })
+          }"
+          @click="roleFilter = roleFilter === 'customer' ? 'all' : 'customer'"
+        >
+          Khách hàng
+        </button>
+        <button
+          type="button"
+          class="conv-role-chip"
+          :style="{
+            padding: '2px 10px',
+            fontSize: '11px',
+            borderRadius: '12px',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            border: '1px solid',
+            ...(roleFilter === 'supplier'
+              ? { background: '#FFF4ED', color: '#EA580C', borderColor: '#F97316', fontWeight: '700', boxShadow: '0 1px 3px rgba(249,115,22,0.2)' }
+              : { background: 'transparent', color: '#EA580C', borderColor: 'rgba(234,88,12,0.25)', fontWeight: '500' })
+          }"
+          @click="roleFilter = roleFilter === 'supplier' ? 'all' : 'supplier'"
+        >
+          Nhà cung cấp
+        </button>
+      </div>
     </div>
 
     <!-- List -->
@@ -69,6 +126,21 @@
         <v-list-item-title class="d-flex align-center">
           <span class="text-truncate" :class="{ 'font-weight-bold': conv.unreadCount > 0, 'text-medium-emphasis': conv.isMuted }">
             {{ conv.threadType === 'group' ? (conv.contact?.fullName || 'Nhóm') : (conv.contact?.fullName || 'Unknown') }}
+          </span>
+          <!-- Customer / Supplier tags (Text only, no icon, colored badges) -->
+          <span
+            v-if="conv.contact?.tags?.includes('Khách hàng')"
+            class="ml-1 conv-tag-kh"
+            style="background: #E8F8EE; color: #007A3D; border: 1px solid rgba(0,122,61,0.25); font-size: 10.5px; font-weight: 600; border-radius: 4px; padding: 1px 6px; line-height: 16px; white-space: nowrap; flex-shrink: 0; display: inline-block;"
+          >
+            Khách hàng
+          </span>
+          <span
+            v-else-if="conv.contact?.tags?.includes('Nhà cung cấp')"
+            class="ml-1 conv-tag-ncc"
+            style="background: #FFF4ED; color: #EA580C; border: 1px solid rgba(234,88,12,0.25); font-size: 10.5px; font-weight: 600; border-radius: 4px; padding: 1px 6px; line-height: 16px; white-space: nowrap; flex-shrink: 0; display: inline-block;"
+          >
+            Nhà cung cấp
           </span>
           <v-chip v-if="conv.threadType === 'group'" size="x-small" color="info" variant="tonal" class="ml-1">Nhóm</v-chip>
           <v-icon v-if="conv.isCustomer" color="error" size="14" class="ml-1" title="Đang theo dõi nhóm">mdi-bell-ring</v-icon>
@@ -139,6 +211,26 @@
                     <v-list-item-title class="text-body-2">
                       {{ isPinned(conv.id) ? 'Bỏ ghim hội thoại' : 'Ghim hội thoại' }}
                     </v-list-item-title>
+                  </v-list-item>
+
+                  <!-- Đánh dấu: Khách hàng -->
+                  <v-list-item @click.stop="toggleCategory(conv, 'Khách hàng')" class="conv-menu-item rounded d-flex align-center justify-space-between">
+                    <v-list-item-title class="text-body-2 font-weight-medium" style="color: #007A3D;">
+                      Đánh dấu: Khách hàng
+                    </v-list-item-title>
+                    <template #append>
+                      <v-icon v-if="conv.contact?.tags?.includes('Khách hàng')" icon="mdi-check" size="16" color="#007A3D" />
+                    </template>
+                  </v-list-item>
+
+                  <!-- Đánh dấu: Nhà cung cấp -->
+                  <v-list-item @click.stop="toggleCategory(conv, 'Nhà cung cấp')" class="conv-menu-item rounded d-flex align-center justify-space-between">
+                    <v-list-item-title class="text-body-2 font-weight-medium" style="color: #EA580C;">
+                      Đánh dấu: Nhà cung cấp
+                    </v-list-item-title>
+                    <template #append>
+                      <v-icon v-if="conv.contact?.tags?.includes('Nhà cung cấp')" icon="mdi-check" size="16" color="#EA580C" />
+                    </template>
                   </v-list-item>
 
                   <!-- 2. Phân loại > -->
@@ -609,6 +701,7 @@ const emit = defineEmits<{
 }>();
 
 const accountOptions = ref<{ text: string; value: string }[]>([]);
+const roleFilter = ref<'all' | 'customer' | 'supplier'>('all');
 const currentAccountName = computed(() => accountOptions.value.find(account => account.value === props.accountId)?.text || 'Tất cả Zalo');
 const selectedAccountId = ref<string | null>(props.accountId || null);
 watch(() => props.accountId, value => { selectedAccountId.value = value || null; });
@@ -860,6 +953,14 @@ async function toggleCategory(conv: Conversation, catTitle: string) {
   if (idx !== -1) {
     current.splice(idx, 1);
   } else {
+    // If tagging as Customer, remove Supplier tag if present (mutually exclusive)
+    if (catTitle === 'Khách hàng') {
+      const suppIdx = current.indexOf('Nhà cung cấp');
+      if (suppIdx !== -1) current.splice(suppIdx, 1);
+    } else if (catTitle === 'Nhà cung cấp') {
+      const custIdx = current.indexOf('Khách hàng');
+      if (custIdx !== -1) current.splice(custIdx, 1);
+    }
     current.push(catTitle);
   }
   contact.tags = current;
@@ -1016,10 +1117,17 @@ function getConvName(conv: Conversation): string {
 // Display conversations sorting (Pinned first, then tracked mode or lastMessageAt)
 const displayConversations = computed(() => {
   // Filter out hidden conversations unless searching
-  const filtered = props.conversations.filter(c => {
+  let filtered = props.conversations.filter(c => {
     if (props.search?.trim()) return true;
     return !hiddenConversationIds.value.includes(c.id);
   });
+
+  // Filter by role: Khách hàng vs Nhà cung cấp
+  if (roleFilter.value === 'customer') {
+    filtered = filtered.filter(c => c.contact?.tags?.includes('Khách hàng'));
+  } else if (roleFilter.value === 'supplier') {
+    filtered = filtered.filter(c => c.contact?.tags?.includes('Nhà cung cấp'));
+  }
 
   const getDeliveryDays = (conv: Conversation): number => {
     const dateStr = conv.contact?.metadata?.deliveryDate;
