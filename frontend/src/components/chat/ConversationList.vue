@@ -1310,12 +1310,12 @@ const displayConversations = computed(() => {
 
   // Unread toggle filter (strictly unread conversations only)
   if (unreadOnly.value) {
-    filtered = filtered.filter(c => (c.unreadCount ?? 0) > 0);
+    filtered = filtered.filter(c => Number(c.unreadCount || 0) > 0);
   }
 
   // Group toggle filter
   if (groupOnly.value) {
-    filtered = filtered.filter(c => c.threadType === 'group');
+    filtered = filtered.filter(c => c.threadType === 'group' || (c as any).isGroup === true);
   }
 
   // Helper role tags
