@@ -1295,17 +1295,22 @@ const displayConversations = computed(() => {
     return !hiddenConversationIds.value.includes(c.id);
   });
 
-  // Channel filter (zalo / whatsapp) if tab is active
-  if (props.activeTab === 'zalo' || props.activeTab === 'whatsapp') {
+  // Channel filter (zalo / whatsapp)
+  if (props.activeTab === 'zalo') {
     filtered = filtered.filter(c => {
-      const ch = c.channel === 'whatsapp' || (c.zaloAccount as any)?.channel === 'whatsapp' ? 'whatsapp' : 'zalo';
-      return ch === props.activeTab;
+      const ch = c.channel || (c.zaloAccount as any)?.channel || 'zalo';
+      return ch !== 'whatsapp';
+    });
+  } else if (props.activeTab === 'whatsapp') {
+    filtered = filtered.filter(c => {
+      const ch = c.channel || (c.zaloAccount as any)?.channel;
+      return ch === 'whatsapp';
     });
   }
 
-  // Unread toggle filter
+  // Unread toggle filter (strictly unread conversations only)
   if (unreadOnly.value) {
-    filtered = filtered.filter(c => (c.unreadCount ?? 0) > 0 || c.id === props.selectedId);
+    filtered = filtered.filter(c => (c.unreadCount ?? 0) > 0);
   }
 
   // Group toggle filter
@@ -1313,13 +1318,22 @@ const displayConversations = computed(() => {
     filtered = filtered.filter(c => c.threadType === 'group');
   }
 
+  // Helper role tags
+  const hasTag = (c: Conversation, tag: string) => {
+    const t = c.contact?.tags as any;
+    return Array.isArray(t) ? t.includes(tag) : (typeof t === 'string' ? t.includes(tag) : false);
+  };
+  const isSupplier = (c: Conversation) => hasTag(c, 'Nhà cung cấp');
+  const isInternal = (c: Conversation) => hasTag(c, 'Nội bộ') || hasTag(c, 'Nội bộ công ty');
+  const isCustomer = (c: Conversation) => hasTag(c, 'Khách hàng') || (!isSupplier(c) && !isInternal(c));
+
   // Filter by role: Khách hàng vs Nhà cung cấp vs Nội bộ vs CRM status vs Nhãn tự tạo
   if (roleFilter.value === 'customer') {
-    filtered = filtered.filter(c => c.contact?.tags?.includes('Khách hàng'));
+    filtered = filtered.filter(isCustomer);
   } else if (roleFilter.value === 'supplier') {
-    filtered = filtered.filter(c => c.contact?.tags?.includes('Nhà cung cấp'));
+    filtered = filtered.filter(isSupplier);
   } else if (roleFilter.value === 'internal') {
-    filtered = filtered.filter(c => c.contact?.tags?.includes('Nội bộ') || c.contact?.tags?.includes('Nội bộ công ty'));
+    filtered = filtered.filter(isInternal);
   } else if (roleFilter.value.startsWith('status:')) {
     const targetStatus = roleFilter.value.replace('status:', '');
     filtered = filtered.filter(c => {
@@ -1329,7 +1343,7 @@ const displayConversations = computed(() => {
         : curStatus === targetStatus;
     });
   } else if (roleFilter.value !== 'all') {
-    filtered = filtered.filter(c => c.contact?.tags?.includes(roleFilter.value));
+    filtered = filtered.filter(c => hasTag(c, roleFilter.value));
   }
 
   const getDeliveryDays = (conv: Conversation): number => {

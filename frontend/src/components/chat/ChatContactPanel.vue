@@ -75,7 +75,35 @@
           <v-img v-else-if="props.contact?.avatarUrl" :src="props.contact.avatarUrl" />
           <v-icon v-else icon="mdi-account" size="22" color="primary" />
         </v-avatar>
-        <div class="compact-profile-name"><strong :title="contactDisplayName">{{ contactDisplayName }}</strong><span>{{ props.conversation?.threadType === 'group' ? 'Nhóm trò chuyện' : 'Khách hàng' }}</span></div>
+        <div class="compact-profile-name">
+          <strong :title="contactDisplayName">{{ contactDisplayName }}</strong>
+          <div class="d-flex align-center mt-1" style="gap: 4px;">
+            <button
+              type="button"
+              class="px-1.5 py-0.5 rounded text-caption font-weight-bold"
+              :style="currentContactRole === 'Khách hàng' ? { background: '#E8F8EE', color: '#007A3D', border: '1px solid #007A3D', cursor: 'pointer', fontSize: '10.5px' } : { background: 'transparent', color: 'rgba(var(--v-theme-on-surface), 0.6)', border: '1px solid rgba(var(--v-border-color), 0.25)', cursor: 'pointer', fontSize: '10.5px' }"
+              @click="setContactRole('Khách hàng')"
+            >
+              Khách hàng
+            </button>
+            <button
+              type="button"
+              class="px-1.5 py-0.5 rounded text-caption font-weight-bold"
+              :style="currentContactRole === 'Nhà cung cấp' ? { background: '#FFF4ED', color: '#EA580C', border: '1px solid #EA580C', cursor: 'pointer', fontSize: '10.5px' } : { background: 'transparent', color: 'rgba(var(--v-theme-on-surface), 0.6)', border: '1px solid rgba(var(--v-border-color), 0.25)', cursor: 'pointer', fontSize: '10.5px' }"
+              @click="setContactRole('Nhà cung cấp')"
+            >
+              Nhà cung cấp
+            </button>
+            <button
+              type="button"
+              class="px-1.5 py-0.5 rounded text-caption font-weight-bold"
+              :style="currentContactRole === 'Nội bộ' ? { background: '#F1F5F9', color: '#475569', border: '1px solid #475569', cursor: 'pointer', fontSize: '10.5px' } : { background: 'transparent', color: 'rgba(var(--v-theme-on-surface), 0.6)', border: '1px solid rgba(var(--v-border-color), 0.25)', cursor: 'pointer', fontSize: '10.5px' }"
+              @click="setContactRole('Nội bộ')"
+            >
+              Nội bộ
+            </button>
+          </div>
+        </div>
         <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" title="Chỉnh sửa tên" aria-label="Chỉnh sửa tên" @click="openEditNameDialog" />
       </div>
       <div class="contact-action-strip" role="group" aria-label="Thao tác hội thoại">
@@ -395,6 +423,34 @@ const contactDisplayName = computed(() => {
   }
   return form.fullName || props.contact?.fullName || props.conversation?.contact?.fullName || 'Khách hàng';
 });
+
+// ── Contact Role Tagging (Khách hàng vs Nhà cung cấp vs Nội bộ) ─────────────
+const currentContactRole = computed(() => {
+  const tags = props.contact?.tags;
+  if (!Array.isArray(tags)) return 'Khách hàng';
+  if (tags.includes('Nhà cung cấp')) return 'Nhà cung cấp';
+  if (tags.includes('Nội bộ') || tags.includes('Nội bộ công ty')) return 'Nội bộ';
+  return 'Khách hàng';
+});
+
+async function setContactRole(role: 'Khách hàng' | 'Nhà cung cấp' | 'Nội bộ') {
+  if (!props.contactId) return;
+  const currentTags = Array.isArray(props.contact?.tags) ? [...props.contact.tags] : [];
+  const filteredTags = currentTags.filter(t => t !== 'Khách hàng' && t !== 'Nhà cung cấp' && t !== 'Nội bộ' && t !== 'Nội bộ công ty');
+  if (role === 'Nhà cung cấp') filteredTags.push('Nhà cung cấp');
+  else if (role === 'Nội bộ') filteredTags.push('Nội bộ công ty');
+  else filteredTags.push('Khách hàng');
+
+  if (props.contact) {
+    props.contact.tags = filteredTags;
+  }
+  try {
+    await api.put(`/contacts/${props.contactId}/tags`, { tags: filteredTags });
+    emit('saved');
+  } catch (err) {
+    console.error('Failed to set role:', err);
+  }
+}
 
 // ── Edit Name Dialog ────────────────────────────────────────────────────────
 const editNameDialog = ref(false);
