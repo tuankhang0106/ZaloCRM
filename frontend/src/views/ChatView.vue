@@ -172,7 +172,7 @@ onMounted(async () => {
 onUnmounted(() => { destroySocket(); });
 
 const activeConversationTab = computed(() => {
-  if (['unread', 'personal', 'group'].includes(String(route.query.tab))) return String(route.query.tab);
+  if (['zalo', 'whatsapp', 'unread', 'personal', 'group'].includes(String(route.query.tab))) return String(route.query.tab);
   return route.query.mode === 'unread' ? 'unread' : 'all';
 });
 function changeConversationTab(tab: string) {

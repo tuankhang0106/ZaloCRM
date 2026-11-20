@@ -49,6 +49,7 @@ interface ZaloAccount {
   id: string;
   displayName: string | null;
   status?: string;
+  channel?: string;
 }
 
 interface ConversationMessage {
@@ -61,6 +62,7 @@ interface ConversationMessage {
 
 export interface Conversation {
   id: string;
+  channel?: string;
   threadType: 'user' | 'group';
   groupName?: string | null;
   contact: Contact | null;
