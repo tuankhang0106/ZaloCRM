@@ -756,11 +756,25 @@ export async function chatRoutes(app: FastifyInstance) {
         res?.messageId ||
         res?.msgId ||
         res?.id ||
+        res?.message?.msgId ||
+        res?.message?.messageId ||
+        res?.message?.id ||
         res?.attachment?.[0]?.msgId ||
         res?.attachment?.[0]?.messageId ||
         res?.attachment?.[0]?.data?.msgId ||
         res?.attachment?.[0]?.data?.messageId ||
+        res?.attachment?.[0]?.id ||
         null;
+
+      const cliMsgId =
+        res?.message?.cliMsgId ||
+        res?.cliMsgId ||
+        res?.attachment?.[0]?.cliMsgId ||
+        res?.attachment?.[0]?.data?.cliMsgId ||
+        null;
+      if (cliMsgId) {
+        messageAttachments.push({ type: 'meta', cliMsgId: String(cliMsgId) });
+      }
 
       let message;
       const sixtySecondsAgo = new Date(Date.now() - 60 * 1000);
@@ -1545,28 +1559,81 @@ export async function chatRoutes(app: FastifyInstance) {
     });
     if (!message) return reply.status(404).send({ error: 'Message not found' });
 
-    const instance = zaloPool.getInstance(conversation.zaloAccountId);
+    if (message.senderType !== 'self') {
+      return reply.status(400).send({ error: 'Chỉ có thể thu hồi tin nhắn do chính bạn gửi' });
+    }
+
+    const isWhatsApp = conversation.channel === 'whatsapp' || conversation.zaloAccount?.channel === 'whatsapp';
     let zaloSynced = false;
     let zaloWarning: string | undefined = undefined;
 
-    if (instance?.api && message.zaloMsgId) {
+    if (isWhatsApp) {
       const threadId = conversation.externalThreadId || '';
-      const threadType = conversation.threadType === 'group' ? 1 : 0;
+      const targetMsgId = message.zaloMsgId || message.id;
       try {
-        await instance.api.undo(
-          { msgId: message.zaloMsgId, cliMsgId: message.zaloMsgId },
+        const revoked = await whatsappPool.revokeMessage(
+          conversation.zaloAccountId,
           threadId,
-          threadType
+          targetMsgId
         );
-        zaloSynced = true;
-        logger.info(`[chat-routes] Undone message ${message.zaloMsgId} on Zalo`);
-      } catch (zaloErr: any) {
+        if (revoked) {
+          zaloSynced = true;
+          logger.info(`[chat-routes] Revoked message ${targetMsgId} on WhatsApp`);
+        } else {
+          zaloSynced = false;
+          zaloWarning = 'Không thể thu hồi trên WhatsApp (tin nhắn có thể đã quá thời hạn cho phép hoặc người nhận đã offline)';
+          logger.warn(`[chat-routes] Revoke on WhatsApp returned false for ${targetMsgId}`);
+        }
+      } catch (waErr: any) {
         zaloSynced = false;
-        zaloWarning = zaloErr?.message || String(zaloErr);
-        logger.warn(`[chat-routes] Undo on Zalo failed or message expired: ${zaloWarning}`);
+        zaloWarning = waErr?.message || String(waErr);
+        logger.warn(`[chat-routes] Revoke on WhatsApp failed: ${zaloWarning}`);
       }
     } else {
-      zaloWarning = 'Tài khoản Zalo chưa kết nối hoặc tin nhắn không có ID Zalo';
+      // Zalo
+      const instance = zaloPool.getInstance(conversation.zaloAccountId);
+      if (instance?.api && (message.zaloMsgId || message.id)) {
+        const threadId = conversation.externalThreadId || '';
+        const threadType = conversation.threadType === 'group' ? 1 : 0;
+        const targetMsgId = message.zaloMsgId || message.id;
+
+        const attList = Array.isArray(message.attachments) ? (message.attachments as any[]) : [];
+        const attCliMsgId = attList.find(a => a?.cliMsgId)?.cliMsgId;
+        const candidateCliMsgIds = [
+          attCliMsgId,
+          targetMsgId,
+          String(message.sentAt ? new Date(message.sentAt).getTime() : Date.now()),
+          String(message.createdAt ? new Date(message.createdAt).getTime() : Date.now()),
+        ].filter(Boolean);
+
+        let undone = false;
+        let lastError: any = null;
+
+        for (const candCli of candidateCliMsgIds) {
+          try {
+            await instance.api.undo(
+              { msgId: targetMsgId, cliMsgId: candCli },
+              threadId,
+              threadType
+            );
+            undone = true;
+            break;
+          } catch (zaloErr: any) {
+            lastError = zaloErr;
+          }
+        }
+
+        if (undone) {
+          zaloSynced = true;
+          logger.info(`[chat-routes] Undone message ${targetMsgId} on Zalo`);
+        } else {
+          zaloSynced = false;
+          zaloWarning = lastError?.message || String(lastError) || 'Thu hồi trên Zalo thất bại';
+          logger.warn(`[chat-routes] Undo on Zalo failed or message expired: ${zaloWarning}`);
+        }
+      } else {
+        zaloWarning = 'Tài khoản Zalo chưa kết nối hoặc tin nhắn không có ID Zalo hợp lệ';
+      }
     }
 
     const updated = await prisma.message.update({
@@ -1602,26 +1669,30 @@ export async function chatRoutes(app: FastifyInstance) {
     });
     if (!message) return reply.status(404).send({ error: 'Message not found' });
 
-    const instance = zaloPool.getInstance(conversation.zaloAccountId);
-    if (instance?.api && message.zaloMsgId) {
-      const threadId = conversation.externalThreadId || '';
-      const threadType = conversation.threadType === 'group' ? 1 : 0;
-      try {
-        await instance.api.deleteMessage(
-          {
-            data: {
-              cliMsgId: message.zaloMsgId,
-              msgId: message.zaloMsgId,
-              uidFrom: message.senderUid || '',
+    const isWhatsApp = conversation.channel === 'whatsapp' || conversation.zaloAccount?.channel === 'whatsapp';
+
+    if (!isWhatsApp) {
+      const instance = zaloPool.getInstance(conversation.zaloAccountId);
+      if (instance?.api && message.zaloMsgId) {
+        const threadId = conversation.externalThreadId || '';
+        const threadType = conversation.threadType === 'group' ? 1 : 0;
+        try {
+          await instance.api.deleteMessage(
+            {
+              data: {
+                cliMsgId: message.zaloMsgId,
+                msgId: message.zaloMsgId,
+                uidFrom: message.senderUid || '',
+              },
+              threadId,
+              type: threadType,
             },
-            threadId,
-            type: threadType,
-          },
-          true
-        );
-        logger.info(`[chat-routes] Deleted message ${message.zaloMsgId} for me on Zalo`);
-      } catch (zaloErr: any) {
-        logger.warn(`[chat-routes] Delete for me on Zalo warning: ${zaloErr?.message || zaloErr}`);
+            true
+          );
+          logger.info(`[chat-routes] Deleted message ${message.zaloMsgId} for me on Zalo`);
+        } catch (zaloErr: any) {
+          logger.warn(`[chat-routes] Delete for me on Zalo warning: ${zaloErr?.message || zaloErr}`);
+        }
       }
     }
 

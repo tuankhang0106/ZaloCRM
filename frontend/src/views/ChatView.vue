@@ -38,8 +38,6 @@
       @send="sendMessage"
       @send-file="sendFile"
       @load-more="loadMoreMessages"
-      @recall-message="recallMessage"
-      @delete-message-for-me="deleteMessageForMe"
       @toggle-mute="handleToggleMute"
       @toggle-contact-panel="showContactPanel = !showContactPanel"
       :show-contact-panel="showContactPanel"
@@ -104,7 +102,6 @@ const {
   loadingConvs, loadingMsgs, loadingMoreMsgs, hasMoreMessages, sendingMsg, searchQuery, accountFilter,
   tasksMode, trackedMode, unreadMode, categoryFilter, statusFilter, threadTypeFilter,
   fetchConversations, selectConversation, loadMoreMessages, sendMessage, sendFile,
-  recallMessage, deleteMessageForMe,
   initSocket, destroySocket, toggleMute,
 } = useChat();
 

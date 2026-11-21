@@ -1880,11 +1880,10 @@ async function handleRecall(msg: Message) {
   try {
     const res = await api.post(`/conversations/${props.conversation.id}/messages/${msg.id}/undo`);
     msg.isDeleted = true;
-    emit('recall-message', msg.id);
     if (res.data?.zaloSynced === false) {
       syncSnack.value = {
         show: true,
-        text: 'Đã thu hồi trên CRM. Lưu ý: Zalo chính thức từ chối lệnh này (tin nhắn Danh thiếp hoặc đã hết hạn thu hồi trên Zalo).',
+        text: 'Đã thu hồi trên CRM. Lưu ý: ' + (res.data?.zaloWarning || 'Zalo/WhatsApp từ chối thu hồi (có thể đã quá thời hạn cho phép).'),
         color: 'warning'
       };
     } else {
@@ -1904,7 +1903,6 @@ async function handleDeleteOnlyMe(msg: Message) {
     if (idx !== -1) {
       props.messages.splice(idx, 1);
     }
-    emit('delete-message-for-me', msg.id);
     syncSnack.value = { show: true, text: 'Đã xóa tin nhắn chỉ ở phía tôi!', color: 'success' };
   } catch (err: any) {
     console.error('Failed to delete message for me:', err);

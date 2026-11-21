@@ -273,16 +273,20 @@ export function useChat() {
         quoteMessageId,
       });
 
-      const idx = messages.value.findIndex(m => m.id === tempId);
-      if (idx !== -1) {
-        messages.value[idx] = { ...res.data, status: 'sent' };
-      } else {
-        const exists = messages.value.find(m => m.id === res.data.id || (res.data.zaloMsgId && m.zaloMsgId === res.data.zaloMsgId));
-        if (!exists) {
-          messages.value.push({ ...res.data, status: 'sent' });
-        } else {
-          Object.assign(exists, res.data, { status: 'sent' });
+      const alreadyExistsIdx = messages.value.findIndex(m =>
+        m.id === res.data.id || (res.data.zaloMsgId && m.zaloMsgId === res.data.zaloMsgId)
+      );
+      const tempIdx = messages.value.findIndex(m => m.id === tempId);
+
+      if (alreadyExistsIdx !== -1) {
+        messages.value[alreadyExistsIdx] = { ...res.data, status: 'sent' };
+        if (tempIdx !== -1 && tempIdx !== alreadyExistsIdx) {
+          messages.value.splice(tempIdx, 1);
         }
+      } else if (tempIdx !== -1) {
+        messages.value[tempIdx] = { ...res.data, status: 'sent' };
+      } else {
+        messages.value.push({ ...res.data, status: 'sent' });
       }
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -290,6 +294,7 @@ export function useChat() {
       if (found) {
         found.status = 'failed';
       }
+      throw err;
     } finally {
       sendingMsg.value = false;
     }
@@ -306,12 +311,21 @@ export function useChat() {
 
   async function recallMessage(messageId: string) {
     if (!selectedConvId.value) return;
-    const res = await api.post(`/conversations/${selectedConvId.value}/messages/${messageId}/undo`);
-    const msg = messages.value.find(m => m.id === messageId);
-    if (msg) {
-      msg.isDeleted = true;
+    try {
+      const res = await api.post(`/conversations/${selectedConvId.value}/messages/${messageId}/undo`);
+      if (res.data?.success === false || res.data?.error) {
+        throw new Error(res.data?.error || res.data?.zaloWarning || 'Thu hồi tin nhắn thất bại');
+      }
+      const msg = messages.value.find(m => m.id === messageId);
+      if (msg) {
+        msg.isDeleted = true;
+      }
+      return res.data;
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.error || err?.response?.data?.zaloWarning || err?.message || 'Không thể thu hồi tin nhắn';
+      console.error('[recallMessage] Error:', errMsg);
+      throw new Error(errMsg);
     }
-    return res.data;
   }
 
   async function deleteMessageForMe(messageId: string) {
@@ -369,16 +383,20 @@ export function useChat() {
         },
       });
 
-      const idx = messages.value.findIndex(m => m.id === tempId);
-      if (idx !== -1) {
-        messages.value[idx] = { ...res.data, status: 'sent' };
-      } else {
-        const exists = messages.value.find(m => m.id === res.data.id || (res.data.zaloMsgId && m.zaloMsgId === res.data.zaloMsgId));
-        if (!exists) {
-          messages.value.push({ ...res.data, status: 'sent' });
-        } else {
-          Object.assign(exists, res.data, { status: 'sent' });
+      const alreadyExistsIdx = messages.value.findIndex(m =>
+        m.id === res.data.id || (res.data.zaloMsgId && m.zaloMsgId === res.data.zaloMsgId)
+      );
+      const tempIdx = messages.value.findIndex(m => m.id === tempId);
+
+      if (alreadyExistsIdx !== -1) {
+        messages.value[alreadyExistsIdx] = { ...res.data, status: 'sent' };
+        if (tempIdx !== -1 && tempIdx !== alreadyExistsIdx) {
+          messages.value.splice(tempIdx, 1);
         }
+      } else if (tempIdx !== -1) {
+        messages.value[tempIdx] = { ...res.data, status: 'sent' };
+      } else {
+        messages.value.push({ ...res.data, status: 'sent' });
       }
     } catch (err) {
       console.error('Failed to send file:', err);
@@ -410,24 +428,36 @@ export function useChat() {
     socket.on('chat:message', (data: { message: Message; conversationId: string }) => {
       // Add to messages if viewing this conversation
       if (data.conversationId === selectedConvId.value) {
-        // If an optimistic message from self is pending and matches this content, replace it!
-        const pendingIdx = messages.value.findIndex(m =>
-          (m.id.startsWith('temp_') || m.status === 'sending') &&
-          m.senderType === 'self' &&
-          m.content === data.message.content
+        // If an optimistic message from self is pending, match and replace it!
+        // 1. Exact content match
+        // 2. Media match by contentType (image/file)
+        const pendingIdx = messages.value.findIndex(m => {
+          if (!m.id.startsWith('temp_') && m.status !== 'sending') return false;
+          if (m.senderType !== 'self') return false;
+          if (m.content === data.message.content) return true;
+          if ((m.contentType === 'image' || m.contentType === 'file') && m.contentType === data.message.contentType) {
+            return true;
+          }
+          return false;
+        });
+
+        const existsIdx = messages.value.findIndex(m =>
+          m.id === data.message.id ||
+          (data.message.zaloMsgId && m.zaloMsgId === data.message.zaloMsgId)
         );
 
         if (pendingIdx !== -1) {
-          messages.value[pendingIdx] = { ...data.message, status: 'sent' };
+          if (existsIdx !== -1 && existsIdx !== pendingIdx) {
+            messages.value[existsIdx] = { ...data.message, status: 'sent' };
+            messages.value.splice(pendingIdx, 1);
+          } else {
+            messages.value[pendingIdx] = { ...data.message, status: 'sent' };
+          }
         } else {
-          const exists = messages.value.find(m =>
-            m.id === data.message.id ||
-            (data.message.zaloMsgId && m.zaloMsgId === data.message.zaloMsgId)
-          );
-          if (!exists) {
+          if (existsIdx === -1) {
             messages.value.push({ ...data.message, status: 'sent' });
           } else {
-            Object.assign(exists, data.message, { status: 'sent' });
+            Object.assign(messages.value[existsIdx], data.message, { status: 'sent' });
           }
         }
       }
