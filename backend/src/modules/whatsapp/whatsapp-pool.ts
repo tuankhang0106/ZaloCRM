@@ -2091,13 +2091,14 @@ export class WhatsAppAccountPool {
 
         const isGroup = Boolean(chat.isGroup || remoteJid.endsWith('@g.us'));
         const contactPhone = (isGroup ? '' : remoteJid).split('@')[0] || '';
-        const chatName = chat.name || chat.formattedTitle || (contactPhone ? `+${contactPhone}` : 'WhatsApp Contact');
+        let chatName = chat.name || chat.formattedTitle || '';
         const unreadCount = Number(chat.unreadCount || 0);
 
         let contactAvatar: string | undefined;
         let contactId: string | null = null;
 
         if (isGroup) {
+          if (!chatName) chatName = 'Nhóm WhatsApp';
           // Upsert Contact for group so it displays the group name in CRM list
           const existingGroupContact = await prisma.contact.findFirst({
             where: {
@@ -2132,12 +2133,25 @@ export class WhatsAppAccountPool {
             contactId = newGroupContact.id;
           }
         } else {
+          // Resolve 1-on-1 contact name: prioritize contact.name / pushname / shortName over raw phone number!
+          let contactObj: any = null;
           if (typeof chat.getContact === 'function') {
             try {
-              const contact = await chat.getContact();
-              contactAvatar = await contact.getProfilePicUrl().catch(() => undefined);
+              contactObj = await chat.getContact();
+              contactAvatar = await contactObj.getProfilePicUrl().catch(() => undefined);
             } catch {}
           }
+
+          const rawCandidate =
+            contactObj?.name ||
+            contactObj?.pushname ||
+            contactObj?.shortName ||
+            contactObj?.verifiedName ||
+            (chat.name && chat.name !== contactPhone ? chat.name : '') ||
+            (chat.formattedTitle && chat.formattedTitle !== contactPhone ? chat.formattedTitle : '');
+
+          const resolvedName = rawCandidate && rawCandidate.trim() ? rawCandidate.trim() : (contactPhone ? `+${contactPhone}` : 'Khách hàng WhatsApp');
+          chatName = resolvedName;
 
           // Upsert Contact in database
           const existingContact = await prisma.contact.findFirst({
@@ -2158,10 +2172,18 @@ export class WhatsAppAccountPool {
 
           if (existingContact) {
             contactId = existingContact.id;
+            const updateData: any = {};
             if (contactAvatar && !existingContact.avatarUrl) {
+              updateData.avatarUrl = contactAvatar;
+            }
+            // Update to real name if previously it was just a phone number or default name
+            if (resolvedName && !resolvedName.startsWith('+') && existingContact.fullName !== resolvedName) {
+              updateData.fullName = resolvedName;
+            }
+            if (Object.keys(updateData).length > 0) {
               await prisma.contact.update({
                 where: { id: existingContact.id },
-                data: { avatarUrl: contactAvatar },
+                data: updateData,
               });
             }
           } else {
@@ -2236,14 +2258,61 @@ export class WhatsAppAccountPool {
           }
         }
 
-        // Fallback: if fetchMessages returned empty, use chat.lastMessage if present
-        if (msgs.length === 0 && (chat.lastMessage || chat._data?.lastMessage)) {
+        // Fallback 1: via pupPage evaluate
+        if ((!msgs || msgs.length === 0) && client.pupPage && remoteJid && remoteJid.includes('@')) {
+          try {
+            const pageMsgs = await client.pupPage.evaluate(async (jid: string, maxMsgs: number) => {
+              const safeRequire = (name: string) => {
+                try { return typeof (window as any).require === 'function' ? (window as any).require(name) : null; } catch { return null; }
+              };
+              const collections = safeRequire('WAWebCollections');
+              const ChatStore = collections?.Chat || (window as any).Store?.Chat;
+              const chatModel = ChatStore?.get?.(jid);
+              if (!chatModel) return [];
+
+              try {
+                if (typeof chatModel.loadEarlierMsgs === 'function') {
+                  await chatModel.loadEarlierMsgs();
+                } else {
+                  const convMsgs = safeRequire('WAWebChatLoadEarlierMsgs') || (window as any).Store?.ConversationMsgs;
+                  if (convMsgs?.loadEarlierMsgs) {
+                    await convMsgs.loadEarlierMsgs(chatModel);
+                  }
+                }
+              } catch {}
+
+              const msgList = typeof chatModel.msgs?.getModelsArray === 'function'
+                ? chatModel.msgs.getModelsArray()
+                : (chatModel.msgs?.models || chatModel.msgs?._models || []);
+
+              return msgList.slice(-maxMsgs).map((m: any) => ({
+                id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
+                body: m.body || m.caption || '',
+                fromMe: Boolean(m.fromMe || m.id?.fromMe),
+                type: m.type || 'chat',
+                hasMedia: Boolean(m.hasMedia || m.type === 'image' || m.type === 'video' || m.type === 'document' || m.type === 'audio' || m.type === 'ptt'),
+                timestamp: m.t || Math.floor(Date.now() / 1000),
+                author: m.author?._serialized || m.author || (m.from?._serialized || m.from || ''),
+                pushname: m.sender?.pushname || m.pushname || '',
+              }));
+            }, remoteJid, limitMsgs);
+
+            if (pageMsgs && pageMsgs.length > 0) {
+              msgs = pageMsgs;
+            }
+          } catch (evalErr: any) {
+            logger.debug(`[whatsapp:${accountId}] page msg eval error: ${evalErr?.message || evalErr}`);
+          }
+        }
+
+        // Fallback 2: if fetchMessages returned empty, use chat.lastMessage if present
+        if ((!msgs || msgs.length === 0) && (chat.lastMessage || chat._data?.lastMessage)) {
           const lm = chat.lastMessage || chat._data?.lastMessage;
           msgs = [lm];
         }
 
-        // Fallback for messages: if chat has lastSnippet
-        if (msgs.length === 0 && chat.lastSnippet) {
+        // Fallback 3: for messages: if chat has lastSnippet
+        if ((!msgs || msgs.length === 0) && chat.lastSnippet) {
           const sentAt = lastMsgDate;
           const snippetId = `wa_snp_${Date.now()}_${Math.random().toString(36).substring(7)}`;
           await prisma.message.create({
@@ -2314,8 +2383,9 @@ export class WhatsAppAccountPool {
               }
             }
 
-            const senderPhone = (isGroup ? (isSelf ? '' : msg.author) : remoteJid)?.split('@')[0] || '';
-            const senderName = isSelf ? 'Bạn' : (chatName || (senderPhone ? `+${senderPhone}` : 'Khách hàng'));
+            const senderAuthor = isGroup ? (isSelf ? '' : (msg.author?._serialized || msg.author || msg.from?._serialized || msg.from || '')) : remoteJid;
+            const senderPhone = senderAuthor ? senderAuthor.split('@')[0] : '';
+            const msgSenderName = isSelf ? 'Bạn' : (msg.pushname || (senderPhone ? `+${senderPhone}` : chatName));
             const sentAt = msg.timestamp ? new Date(msg.timestamp * 1000) : new Date();
 
             await prisma.message.create({
@@ -2325,7 +2395,7 @@ export class WhatsAppAccountPool {
                 zaloMsgId: serializedKey || rawMsgId || `wa_${Date.now()}_${Math.random().toString(36).substring(7)}`,
                 senderType: isSelf ? 'self' : 'contact',
                 senderUid: isGroup ? (msg.author || remoteJid) : (isSelf ? (inst.phone || 'self') : remoteJid),
-                senderName,
+                senderName: msgSenderName,
                 content,
                 contentType,
                 attachments: attachments.length ? JSON.stringify(attachments) : '[]',
@@ -2359,6 +2429,155 @@ export class WhatsAppAccountPool {
     }
 
     return { syncedChats, syncedMessages };
+  }
+
+  /**
+   * Fetch and save recent messages for a specific WhatsApp chat into the database on demand
+   */
+  public async fetchChatMessages(accountId: string, remoteJid: string, limit = 30): Promise<number> {
+    const inst = this.instances.get(accountId);
+    if (!inst || !inst.client) return 0;
+    const client = inst.client;
+
+    try {
+      let chat: any = null;
+      if (typeof client.getChatById === 'function') {
+        chat = await client.getChatById(remoteJid).catch(() => null);
+      }
+      if (!chat) {
+        const chats = await client.getChats().catch(() => []);
+        chat = chats.find((c: any) => (c.id?._serialized || c.id) === remoteJid);
+      }
+
+      let msgs: any[] = [];
+      if (chat && typeof chat.fetchMessages === 'function') {
+        msgs = await chat.fetchMessages({ limit }).catch(() => []);
+      }
+
+      // Fallback 1: via pupPage evaluate
+      if ((!msgs || msgs.length === 0) && client.pupPage) {
+        try {
+          const pageMsgs = await client.pupPage.evaluate(async (jid: string, maxMsgs: number) => {
+            const safeRequire = (name: string) => {
+              try { return typeof (window as any).require === 'function' ? (window as any).require(name) : null; } catch { return null; }
+            };
+            const collections = safeRequire('WAWebCollections');
+            const ChatStore = collections?.Chat || (window as any).Store?.Chat;
+            const chatModel = ChatStore?.get?.(jid);
+            if (!chatModel) return [];
+
+            try {
+              if (typeof chatModel.loadEarlierMsgs === 'function') {
+                await chatModel.loadEarlierMsgs();
+              } else {
+                const convMsgs = safeRequire('WAWebChatLoadEarlierMsgs') || (window as any).Store?.ConversationMsgs;
+                if (convMsgs?.loadEarlierMsgs) {
+                  await convMsgs.loadEarlierMsgs(chatModel);
+                }
+              }
+            } catch {}
+
+            const msgList = typeof chatModel.msgs?.getModelsArray === 'function'
+              ? chatModel.msgs.getModelsArray()
+              : (chatModel.msgs?.models || chatModel.msgs?._models || []);
+
+            return msgList.slice(-maxMsgs).map((m: any) => ({
+              id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
+              body: m.body || m.caption || '',
+              fromMe: Boolean(m.fromMe || m.id?.fromMe),
+              type: m.type || 'chat',
+              hasMedia: Boolean(m.hasMedia || m.type === 'image' || m.type === 'video' || m.type === 'document' || m.type === 'audio' || m.type === 'ptt'),
+              timestamp: m.t || Math.floor(Date.now() / 1000),
+              author: m.author?._serialized || m.author || (m.from?._serialized || m.from || ''),
+              pushname: m.sender?.pushname || m.pushname || '',
+            }));
+          }, remoteJid, limit);
+
+          if (pageMsgs && pageMsgs.length > 0) {
+            msgs = pageMsgs;
+          }
+        } catch {}
+      }
+
+      // Fallback 2: chat.lastMessage
+      if ((!msgs || msgs.length === 0) && (chat?.lastMessage || chat?._data?.lastMessage)) {
+        msgs = [chat.lastMessage || chat._data?.lastMessage];
+      }
+
+      if (!msgs || msgs.length === 0) return 0;
+
+      const conversation = await prisma.conversation.findFirst({
+        where: { zaloAccountId: accountId, externalThreadId: remoteJid },
+        include: { contact: true },
+      });
+      if (!conversation) return 0;
+
+      const isGroup = remoteJid.endsWith('@g.us') || Boolean(chat?.isGroup);
+      const chatName = conversation.contact?.fullName || chat?.name || 'Khách hàng';
+
+      let count = 0;
+      for (const msg of msgs) {
+        try {
+          if (['e2e_notification', 'notification_template', 'call_log', 'gp2', 'protocol'].includes(msg.type)) continue;
+
+          const isSelf = Boolean(msg.fromMe);
+          const serializedKey = typeof msg.id === 'string' ? msg.id : (msg.id?._serialized || '');
+          const rawMsgId = extractRawMsgId(msg?.id?.id || msg?._data?.id?.id || serializedKey);
+          const zaloMsgId = serializedKey || rawMsgId || `wa_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+          const candidateIds = buildCandidateSerializedIds(serializedKey || rawMsgId, remoteJid, isSelf);
+          const exists = await prisma.message.findFirst({
+            where: {
+              conversationId: conversation.id,
+              OR: [
+                { zaloMsgId: { in: candidateIds } },
+                ...(rawMsgId ? [{ zaloMsgId: rawMsgId }] : []),
+              ],
+            },
+          });
+          if (exists) continue;
+
+          let content = msg.body || '';
+          let contentType = 'text';
+          if (msg.hasMedia) {
+            if (msg.type === 'image') contentType = 'image';
+            else if (msg.type === 'video') contentType = 'video';
+            else if (msg.type === 'audio' || msg.type === 'ptt') contentType = 'voice';
+            else if (msg.type === 'document') contentType = 'file';
+            else contentType = 'file';
+            if (!content) {
+              content = contentType === 'image' ? '[Hình ảnh]' : contentType === 'video' ? '[Video]' : contentType === 'voice' ? '[Ghi âm]' : '[Tài liệu]';
+            }
+          }
+
+          const senderAuthor = isGroup ? (isSelf ? '' : (msg.author?._serialized || msg.author || msg.from?._serialized || msg.from || '')) : remoteJid;
+          const senderPhone = senderAuthor ? senderAuthor.split('@')[0] : '';
+          const msgSenderName = isSelf ? 'Bạn' : (msg.pushname || (senderPhone ? `+${senderPhone}` : chatName));
+          const sentAt = msg.timestamp ? new Date(msg.timestamp * 1000) : new Date();
+
+          await prisma.message.create({
+            data: {
+              id: randomUUID(),
+              conversationId: conversation.id,
+              zaloMsgId,
+              senderType: isSelf ? 'self' : 'contact',
+              senderUid: isSelf ? null : senderAuthor,
+              senderName: msgSenderName,
+              content,
+              contentType,
+              attachments: '[]',
+              sentAt,
+            },
+          });
+          count++;
+        } catch {}
+      }
+
+      return count;
+    } catch (err: any) {
+      logger.warn(`[whatsapp:${accountId}] fetchChatMessages error for ${remoteJid}:`, err?.message || err);
+      return 0;
+    }
   }
 
   /**
