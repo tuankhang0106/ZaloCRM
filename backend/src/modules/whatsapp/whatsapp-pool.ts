@@ -2271,6 +2271,17 @@ export class WhatsAppAccountPool {
               if (!chatModel) return [];
 
               try {
+                const cmd = safeRequire('WAWebCmd') || (window as any).Store?.Cmd;
+                if (cmd?.openChatAt) {
+                  await cmd.openChatAt(chatModel);
+                } else if (cmd?.openChatBottom) {
+                  await cmd.openChatBottom(chatModel);
+                }
+              } catch {}
+
+              await new Promise(r => setTimeout(r, 400));
+
+              try {
                 if (typeof chatModel.loadEarlierMsgs === 'function') {
                   await chatModel.loadEarlierMsgs();
                 } else {
@@ -2285,16 +2296,61 @@ export class WhatsAppAccountPool {
                 ? chatModel.msgs.getModelsArray()
                 : (chatModel.msgs?.models || chatModel.msgs?._models || []);
 
-              return msgList.slice(-maxMsgs).map((m: any) => ({
-                id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
-                body: m.body || m.caption || '',
-                fromMe: Boolean(m.fromMe || m.id?.fromMe),
-                type: m.type || 'chat',
-                hasMedia: Boolean(m.hasMedia || m.type === 'image' || m.type === 'video' || m.type === 'document' || m.type === 'audio' || m.type === 'ptt'),
-                timestamp: m.t || Math.floor(Date.now() / 1000),
-                author: m.author?._serialized || m.author || (m.from?._serialized || m.from || ''),
-                pushname: m.sender?.pushname || m.pushname || '',
-              }));
+              if (msgList && msgList.length > 0) {
+                return msgList.slice(-maxMsgs).map((m: any) => ({
+                  id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
+                  body: m.body || m.caption || '',
+                  fromMe: Boolean(m.fromMe || m.id?.fromMe),
+                  type: m.type || 'chat',
+                  hasMedia: Boolean(m.hasMedia || m.type === 'image' || m.type === 'video' || m.type === 'document' || m.type === 'audio' || m.type === 'ptt'),
+                  timestamp: m.t || Math.floor(Date.now() / 1000),
+                  author: m.author?._serialized || m.author || (m.from?._serialized || m.from || ''),
+                  pushname: m.sender?.pushname || m.pushname || '',
+                }));
+              }
+
+              // Fallback: extract messages from DOM #main
+              const main = document.querySelector('#main');
+              if (main) {
+                const msgEls = Array.from(main.querySelectorAll('.message-in, .message-out'));
+                if (msgEls.length > 0) {
+                  return msgEls.slice(-maxMsgs).map((el: any) => {
+                    const isOut = el.classList.contains('message-out');
+                    const copyable = el.querySelector('.copyable-text');
+                    const prePlainText = copyable?.getAttribute('data-pre-plain-text') || '';
+                    const textEl = el.querySelector('.selectable-text');
+                    const text = (textEl?.innerText || el.innerText || '').trim();
+
+                    let senderName = isOut ? 'Bạn' : '';
+                    if (!isOut && prePlainText) {
+                      const match = prePlainText.match(/\]\s*([^:]+):/);
+                      if (match) senderName = match[1].trim();
+                    }
+
+                    let ts = Math.floor(Date.now() / 1000);
+                    if (prePlainText) {
+                      const timeMatch = prePlainText.match(/\[(\d{1,2}):(\d{2}),\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\]/);
+                      if (timeMatch) {
+                        const [, hh, mm, d, m, y] = timeMatch;
+                        ts = Math.floor(new Date(parseInt(y), parseInt(m) - 1, parseInt(d), parseInt(hh), parseInt(mm)).getTime() / 1000);
+                      }
+                    }
+
+                    return {
+                      id: copyable?.getAttribute('data-id') || null,
+                      body: text,
+                      fromMe: isOut,
+                      type: el.querySelector('img') ? 'image' : 'chat',
+                      hasMedia: Boolean(el.querySelector('img, video, audio')),
+                      timestamp: ts,
+                      author: '',
+                      pushname: senderName,
+                    };
+                  });
+                }
+              }
+
+              return [];
             }, remoteJid, limitMsgs);
 
             if (pageMsgs && pageMsgs.length > 0) {
@@ -2314,22 +2370,43 @@ export class WhatsAppAccountPool {
         // Fallback 3: for messages: if chat has lastSnippet
         if ((!msgs || msgs.length === 0) && chat.lastSnippet) {
           const sentAt = lastMsgDate;
-          const snippetId = `wa_snp_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-          await prisma.message.create({
-            data: {
-              id: randomUUID(),
+          const snippetText = String(chat.lastSnippet).trim();
+          const deterministicSnippetId = `wa_snp_${conversation.id}_${sentAt.getTime()}`;
+
+          // Check if snippet or similar message already exists
+          const existingSnippet = await prisma.message.findFirst({
+            where: {
               conversationId: conversation.id,
-              zaloMsgId: snippetId,
-              senderType: 'contact',
-              senderUid: remoteJid,
-              senderName: chatName,
-              content: chat.lastSnippet,
-              contentType: 'text',
-              attachments: '[]',
-              sentAt,
+              OR: [
+                { zaloMsgId: deterministicSnippetId },
+                {
+                  content: snippetText,
+                  sentAt: {
+                    gte: new Date(sentAt.getTime() - 30000),
+                    lte: new Date(sentAt.getTime() + 30000),
+                  },
+                },
+              ],
             },
-          }).catch(() => {});
-          syncedMessages++;
+          });
+
+          if (!existingSnippet && snippetText) {
+            await prisma.message.create({
+              data: {
+                id: randomUUID(),
+                conversationId: conversation.id,
+                zaloMsgId: deterministicSnippetId,
+                senderType: 'contact',
+                senderUid: remoteJid,
+                senderName: chatName,
+                content: snippetText,
+                contentType: 'text',
+                attachments: '[]',
+                sentAt,
+              },
+            }).catch(() => {});
+            syncedMessages++;
+          }
         }
 
         for (const msg of msgs) {
@@ -2347,21 +2424,7 @@ export class WhatsAppAccountPool {
             )[0];
             const rawMsgId = extractRawMsgId(msg?.id?.id || msg?._data?.id?.id || serializedKey);
 
-            // Check if message already exists
-            const candidateIds = buildCandidateSerializedIds(serializedKey || rawMsgId, remoteJid, isSelf);
-            const exists = await prisma.message.findFirst({
-              where: {
-                conversationId: conversation.id,
-                OR: [
-                  { zaloMsgId: { in: candidateIds } },
-                  ...(rawMsgId ? [{ zaloMsgId: rawMsgId }] : []),
-                ],
-              },
-            });
-
-            if (exists) continue;
-
-            let content = msg.body || '';
+            let content = (msg.body || '').trim();
             let contentType = 'text';
             const attachments: any[] = [];
 
@@ -2383,16 +2446,45 @@ export class WhatsAppAccountPool {
               }
             }
 
+            if (!content) content = '[Tin nhắn]';
+
+            const sentAt = msg.timestamp ? new Date(msg.timestamp * 1000) : new Date();
+            const deterministicId = `wa_${conversation.id}_${sentAt.getTime()}_${isSelf ? '1' : '0'}`;
+            const zaloMsgId = serializedKey || rawMsgId || deterministicId;
+
+            // 🚀 Bulletproof Deduplication: check candidate IDs, rawMsgId, deterministicId, AND content + sentAt window!
+            const candidateIds = buildCandidateSerializedIds(serializedKey || rawMsgId, remoteJid, isSelf);
+            candidateIds.push(deterministicId);
+
+            const exists = await prisma.message.findFirst({
+              where: {
+                conversationId: conversation.id,
+                OR: [
+                  { zaloMsgId: { in: candidateIds } },
+                  ...(rawMsgId ? [{ zaloMsgId: rawMsgId }] : []),
+                  {
+                    senderType: isSelf ? 'self' : 'contact',
+                    content,
+                    sentAt: {
+                      gte: new Date(sentAt.getTime() - 20000),
+                      lte: new Date(sentAt.getTime() + 20000),
+                    },
+                  },
+                ],
+              },
+            });
+
+            if (exists) continue;
+
             const senderAuthor = isGroup ? (isSelf ? '' : (msg.author?._serialized || msg.author || msg.from?._serialized || msg.from || '')) : remoteJid;
             const senderPhone = senderAuthor ? senderAuthor.split('@')[0] : '';
             const msgSenderName = isSelf ? 'Bạn' : (msg.pushname || (senderPhone ? `+${senderPhone}` : chatName));
-            const sentAt = msg.timestamp ? new Date(msg.timestamp * 1000) : new Date();
 
             await prisma.message.create({
               data: {
                 id: randomUUID(),
                 conversationId: conversation.id,
-                zaloMsgId: serializedKey || rawMsgId || `wa_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+                zaloMsgId,
                 senderType: isSelf ? 'self' : 'contact',
                 senderUid: isGroup ? (msg.author || remoteJid) : (isSelf ? (inst.phone || 'self') : remoteJid),
                 senderName: msgSenderName,
@@ -2408,6 +2500,30 @@ export class WhatsAppAccountPool {
             logger.warn(`[whatsapp:${accountId}] Error syncing message:`, msgErr?.message || msgErr);
           }
         }
+
+        // 🚀 Auto-cleanup duplicate messages in this conversation (keeps earliest created record)
+        try {
+          const allMsgs = await prisma.message.findMany({
+            where: { conversationId: conversation.id },
+            orderBy: { createdAt: 'asc' },
+          });
+          const seenMinutes = new Set<string>();
+          const toDelete: string[] = [];
+          for (const m of allMsgs) {
+            const key = `${m.senderType}_${(m.content || '').trim()}_${Math.floor(m.sentAt.getTime() / 30000)}`;
+            if (seenMinutes.has(key)) {
+              toDelete.push(m.id);
+            } else {
+              seenMinutes.add(key);
+            }
+          }
+          if (toDelete.length > 0) {
+            await prisma.message.deleteMany({
+              where: { id: { in: toDelete } },
+            });
+            logger.info(`[whatsapp] Cleaned up ${toDelete.length} duplicate messages for conversation ${conversation.id}`);
+          }
+        } catch {}
 
         // Notify frontends via Socket.IO
         if (this.io) {
@@ -2467,6 +2583,17 @@ export class WhatsAppAccountPool {
             if (!chatModel) return [];
 
             try {
+              const cmd = safeRequire('WAWebCmd') || (window as any).Store?.Cmd;
+              if (cmd?.openChatAt) {
+                await cmd.openChatAt(chatModel);
+              } else if (cmd?.openChatBottom) {
+                await cmd.openChatBottom(chatModel);
+              }
+            } catch {}
+
+            await new Promise(r => setTimeout(r, 400));
+
+            try {
               if (typeof chatModel.loadEarlierMsgs === 'function') {
                 await chatModel.loadEarlierMsgs();
               } else {
@@ -2481,16 +2608,61 @@ export class WhatsAppAccountPool {
               ? chatModel.msgs.getModelsArray()
               : (chatModel.msgs?.models || chatModel.msgs?._models || []);
 
-            return msgList.slice(-maxMsgs).map((m: any) => ({
-              id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
-              body: m.body || m.caption || '',
-              fromMe: Boolean(m.fromMe || m.id?.fromMe),
-              type: m.type || 'chat',
-              hasMedia: Boolean(m.hasMedia || m.type === 'image' || m.type === 'video' || m.type === 'document' || m.type === 'audio' || m.type === 'ptt'),
-              timestamp: m.t || Math.floor(Date.now() / 1000),
-              author: m.author?._serialized || m.author || (m.from?._serialized || m.from || ''),
-              pushname: m.sender?.pushname || m.pushname || '',
-            }));
+            if (msgList && msgList.length > 0) {
+              return msgList.slice(-maxMsgs).map((m: any) => ({
+                id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
+                body: m.body || m.caption || '',
+                fromMe: Boolean(m.fromMe || m.id?.fromMe),
+                type: m.type || 'chat',
+                hasMedia: Boolean(m.hasMedia || m.type === 'image' || m.type === 'video' || m.type === 'document' || m.type === 'audio' || m.type === 'ptt'),
+                timestamp: m.t || Math.floor(Date.now() / 1000),
+                author: m.author?._serialized || m.author || (m.from?._serialized || m.from || ''),
+                pushname: m.sender?.pushname || m.pushname || '',
+              }));
+            }
+
+            // Fallback: extract messages from DOM #main
+            const main = document.querySelector('#main');
+            if (main) {
+              const msgEls = Array.from(main.querySelectorAll('.message-in, .message-out'));
+              if (msgEls.length > 0) {
+                return msgEls.slice(-maxMsgs).map((el: any) => {
+                  const isOut = el.classList.contains('message-out');
+                  const copyable = el.querySelector('.copyable-text');
+                  const prePlainText = copyable?.getAttribute('data-pre-plain-text') || '';
+                  const textEl = el.querySelector('.selectable-text');
+                  const text = (textEl?.innerText || el.innerText || '').trim();
+
+                  let senderName = isOut ? 'Bạn' : '';
+                  if (!isOut && prePlainText) {
+                    const match = prePlainText.match(/\]\s*([^:]+):/);
+                    if (match) senderName = match[1].trim();
+                  }
+
+                  let ts = Math.floor(Date.now() / 1000);
+                  if (prePlainText) {
+                    const timeMatch = prePlainText.match(/\[(\d{1,2}):(\d{2}),\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\]/);
+                    if (timeMatch) {
+                      const [, hh, mm, d, m, y] = timeMatch;
+                      ts = Math.floor(new Date(parseInt(y), parseInt(m) - 1, parseInt(d), parseInt(hh), parseInt(mm)).getTime() / 1000);
+                    }
+                  }
+
+                  return {
+                    id: copyable?.getAttribute('data-id') || null,
+                    body: text,
+                    fromMe: isOut,
+                    type: el.querySelector('img') ? 'image' : 'chat',
+                    hasMedia: Boolean(el.querySelector('img, video, audio')),
+                    timestamp: ts,
+                    author: '',
+                    pushname: senderName,
+                  };
+                });
+              }
+            }
+
+            return [];
           }, remoteJid, limit);
 
           if (pageMsgs && pageMsgs.length > 0) {
@@ -2523,21 +2695,8 @@ export class WhatsAppAccountPool {
           const isSelf = Boolean(msg.fromMe);
           const serializedKey = typeof msg.id === 'string' ? msg.id : (msg.id?._serialized || '');
           const rawMsgId = extractRawMsgId(msg?.id?.id || msg?._data?.id?.id || serializedKey);
-          const zaloMsgId = serializedKey || rawMsgId || `wa_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-          const candidateIds = buildCandidateSerializedIds(serializedKey || rawMsgId, remoteJid, isSelf);
-          const exists = await prisma.message.findFirst({
-            where: {
-              conversationId: conversation.id,
-              OR: [
-                { zaloMsgId: { in: candidateIds } },
-                ...(rawMsgId ? [{ zaloMsgId: rawMsgId }] : []),
-              ],
-            },
-          });
-          if (exists) continue;
-
-          let content = msg.body || '';
+          let content = (msg.body || '').trim();
           let contentType = 'text';
           if (msg.hasMedia) {
             if (msg.type === 'image') contentType = 'image';
@@ -2550,10 +2709,37 @@ export class WhatsAppAccountPool {
             }
           }
 
+          if (!content) content = '[Tin nhắn]';
+
+          const sentAt = msg.timestamp ? new Date(msg.timestamp * 1000) : new Date();
+          const deterministicId = `wa_${conversation.id}_${sentAt.getTime()}_${isSelf ? '1' : '0'}`;
+          const zaloMsgId = serializedKey || rawMsgId || deterministicId;
+
+          const candidateIds = buildCandidateSerializedIds(serializedKey || rawMsgId, remoteJid, isSelf);
+          candidateIds.push(deterministicId);
+
+          const exists = await prisma.message.findFirst({
+            where: {
+              conversationId: conversation.id,
+              OR: [
+                { zaloMsgId: { in: candidateIds } },
+                ...(rawMsgId ? [{ zaloMsgId: rawMsgId }] : []),
+                {
+                  senderType: isSelf ? 'self' : 'contact',
+                  content,
+                  sentAt: {
+                    gte: new Date(sentAt.getTime() - 20000),
+                    lte: new Date(sentAt.getTime() + 20000),
+                  },
+                },
+              ],
+            },
+          });
+          if (exists) continue;
+
           const senderAuthor = isGroup ? (isSelf ? '' : (msg.author?._serialized || msg.author || msg.from?._serialized || msg.from || '')) : remoteJid;
           const senderPhone = senderAuthor ? senderAuthor.split('@')[0] : '';
           const msgSenderName = isSelf ? 'Bạn' : (msg.pushname || (senderPhone ? `+${senderPhone}` : chatName));
-          const sentAt = msg.timestamp ? new Date(msg.timestamp * 1000) : new Date();
 
           await prisma.message.create({
             data: {
@@ -2572,6 +2758,29 @@ export class WhatsAppAccountPool {
           count++;
         } catch {}
       }
+
+      // Auto-cleanup duplicate messages in this conversation
+      try {
+        const allMsgs = await prisma.message.findMany({
+          where: { conversationId: conversation.id },
+          orderBy: { createdAt: 'asc' },
+        });
+        const seenMinutes = new Set<string>();
+        const toDelete: string[] = [];
+        for (const m of allMsgs) {
+          const key = `${m.senderType}_${(m.content || '').trim()}_${Math.floor(m.sentAt.getTime() / 30000)}`;
+          if (seenMinutes.has(key)) {
+            toDelete.push(m.id);
+          } else {
+            seenMinutes.add(key);
+          }
+        }
+        if (toDelete.length > 0) {
+          await prisma.message.deleteMany({
+            where: { id: { in: toDelete } },
+          });
+        }
+      } catch {}
 
       return count;
     } catch (err: any) {
