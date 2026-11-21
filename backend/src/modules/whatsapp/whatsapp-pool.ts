@@ -2236,6 +2236,12 @@ export class WhatsAppAccountPool {
           }
         }
 
+        // Fallback: if fetchMessages returned empty, use chat.lastMessage if present
+        if (msgs.length === 0 && (chat.lastMessage || chat._data?.lastMessage)) {
+          const lm = chat.lastMessage || chat._data?.lastMessage;
+          msgs = [lm];
+        }
+
         // Fallback for messages: if chat has lastSnippet
         if (msgs.length === 0 && chat.lastSnippet) {
           const sentAt = lastMsgDate;

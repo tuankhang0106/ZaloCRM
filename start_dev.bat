@@ -18,7 +18,7 @@ if %errorlevel% neq 0 (
 )
 
 rem 2. Khoi dong Backend trong cua so moi
-echo Khoi dong Backend API Server: Port 3000...
+echo Khoi dong Backend API Server: Port 3080...
 start "ZaloCRM Backend" cmd /k "cd /d ""%~dp0backend"" && npm run dev"
 
 rem 3. Khoi dong Frontend trong cua so moi
@@ -35,7 +35,7 @@ echo.
 echo ========================================================
 echo   KHOI DONG THANH CONG! 
 echo   - Giao dien Web: http://localhost:5174 (hoac http://127.0.0.1:5174)
-echo   - Backend API:   http://localhost:3000
+echo   - Backend API:   http://localhost:3080
 echo   - Database:      PostgreSQL Port 5432 (database: zalocrm)
 echo.
 echo   De tat he thong: Dong 2 cua so ZaloCRM Backend va Frontend.
