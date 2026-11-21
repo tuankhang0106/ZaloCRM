@@ -67,9 +67,74 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = '';
     user.value = null;
     localStorage.removeItem('token');
+    const isPortal = typeof window !== 'undefined' && ((window as any).APP_CONFIG || window.location.pathname.startsWith('/crm'));
+    if (isPortal) {
+      const csrfToken = (window as any).APP_CONFIG?.csrfToken || '';
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = '/logout';
+      if (csrfToken) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = '_token';
+        input.value = csrfToken;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
+    }
   }
 
   async function init() {
+    // 1. Try bootstrap from portal if embedded in portal
+    if (typeof window !== 'undefined') {
+      const appConfig = (window as any).APP_CONFIG;
+      if (appConfig?.session?.token) {
+        token.value = appConfig.session.token;
+        if (appConfig.session.user) {
+          user.value = {
+            id: appConfig.session.user.id,
+            email: appConfig.session.user.email,
+            fullName: appConfig.session.user.fullName || appConfig.session.user.full_name || '',
+            role: appConfig.session.user.role || 'staff',
+            orgId: appConfig.session.user.orgId || appConfig.session.user.org_id || '',
+            orgName: appConfig.session.user.orgName || appConfig.session.user.org?.name || 'CRM',
+          };
+        }
+        localStorage.setItem('token', token.value);
+        return;
+      }
+
+      if (appConfig || window.location.pathname.startsWith('/crm')) {
+        try {
+          const res = await fetch('/api/zalo/bootstrap', {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' },
+          });
+          if (res.ok) {
+            const d = await res.json();
+            if (d?.token) {
+              token.value = d.token;
+              if (d.user) {
+                user.value = {
+                  id: d.user.id,
+                  email: d.user.email,
+                  fullName: d.user.fullName || d.user.full_name || '',
+                  role: d.user.role || 'staff',
+                  orgId: d.user.orgId || d.user.org_id || '',
+                  orgName: d.user.orgName || d.user.org?.name || 'CRM',
+                };
+              }
+              localStorage.setItem('token', token.value);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn('[auth] Failed to bootstrap portal session:', e);
+        }
+      }
+    }
+
     if (token.value) {
       await fetchProfile();
     }
