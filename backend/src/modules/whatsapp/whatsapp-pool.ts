@@ -784,7 +784,7 @@ export class WhatsAppAccountPool {
         }
       }
 
-      const incoming: IncomingMessage = {
+      const incoming: any = {
         accountId,
         senderUid: isGroup ? (msg.author || remoteJid) : (isSelf ? msg.from : remoteJid),
         senderName,
@@ -803,7 +803,7 @@ export class WhatsAppAccountPool {
 
       try {
         const result = await handleIncomingMessage(incoming);
-        if (result && result.message && (result.isNew || result.isLinked) && this.io) {
+        if (result && result.message && ((result as any).isNew || (result as any).isLinked) && this.io) {
           const payload = {
             ...result.message,
             channel: 'whatsapp',
@@ -815,9 +815,9 @@ export class WhatsAppAccountPool {
             accountId,
             message: result.message,
             conversationId: result.conversationId,
-            isNew: result.isNew,
+            isNew: (result as any).isNew,
           });
-          if (result.isNew) {
+          if ((result as any).isNew) {
             this.io.to(`org:${orgId}`).emit('conversation:updated', {
               id: result.conversationId,
               lastMessageAt: payload.sentAt,
@@ -1924,32 +1924,54 @@ export class WhatsAppAccountPool {
   public async autoDismissModals(page: any): Promise<boolean> {
     if (!page || (typeof page.isClosed === 'function' && page.isClosed())) return false;
     try {
-      const clicked = await page.evaluate(() => {
-        let acted = false;
-        const buttons = Array.from(document.querySelectorAll('button, [role="button"]')) as HTMLElement[];
-        for (const btn of buttons) {
-          const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-          if (
-            text === 'tiếp tục' ||
-            text === 'continue' ||
-            text === 'làm mới' ||
-            text === 'refresh' ||
-            text === 'update' ||
-            text === 'got it' ||
-            text === 'hiểu rồi' ||
-            text === 'đồng ý' ||
-            text === 'bật'
-          ) {
-            btn.click();
+      let anyClicked = false;
+      for (let pass = 0; pass < 3; pass++) {
+        const clicked = await page.evaluate(() => {
+          let acted = false;
+          const clickEl = (el: HTMLElement) => {
+            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            el.click();
+          };
+          const buttons = Array.from(document.querySelectorAll('button, [role="button"], a')) as HTMLElement[];
+          for (const btn of buttons) {
+            const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+            if (
+              text === 'ok' ||
+              text === 'tiếp tục' ||
+              text === 'continue' ||
+              text === 'làm mới' ||
+              text === 'refresh' ||
+              text === 'update' ||
+              text === 'got it' ||
+              text === 'hiểu rồi' ||
+              text === 'đồng ý' ||
+              text === 'bật'
+            ) {
+              clickEl(btn);
+              acted = true;
+            }
+          }
+          const closeBtns = Array.from(
+            document.querySelectorAll('[data-testid="popup-controls-ok"], [data-testid="x"], [data-icon="x"], [aria-label="Đóng"], [aria-label="Close"]')
+          ) as HTMLElement[];
+          for (const btn of closeBtns) {
+            clickEl(btn);
             acted = true;
           }
+          return acted;
+        });
+        if (clicked) {
+          anyClicked = true;
+          await new Promise((r) => setTimeout(r, 600));
+        } else {
+          break;
         }
-        return acted;
-      });
-      if (clicked) {
+      }
+      if (anyClicked) {
         logger.info('[whatsapp] Automatically dismissed modal/banner dialog on WhatsApp Web');
       }
-      return Boolean(clicked);
+      return anyClicked;
     } catch (e: any) {
       logger.debug(`[whatsapp] autoDismissModals error: ${e?.message || e}`);
       return false;
@@ -1984,36 +2006,138 @@ export class WhatsAppAccountPool {
 
     logger.info(`[whatsapp:${accountId}] Starting recent chats sync (limitChats=${limitChats}, limitMsgs=${limitMsgs})...`);
 
-    let chats: any[] = [];
+    let rawChatList: any[] = [];
     try {
-      chats = await client.getChats();
+      rawChatList = await client.getChats();
     } catch (err: any) {
-      logger.error(`[whatsapp:${accountId}] client.getChats() failed:`, err);
-      return { syncedChats: 0, syncedMessages: 0 };
+      logger.warn(`[whatsapp:${accountId}] client.getChats() error:`, err?.message || err);
+    }
+
+    // Fallback: If client.getChats() returns 0 or throws (due to WhatsApp Web internal Store changes),
+    // extract chats directly from Chromium page context via WAWebCollections or #pane-side DOM!
+    if (!rawChatList || rawChatList.length === 0) {
+      try {
+        logger.info(`[whatsapp:${accountId}] Trying Chromium page context fallback for chats...`);
+        const extracted = await client.pupPage.evaluate(() => {
+          const safeRequire = (name: string) => {
+            try { return typeof (window as any).require === 'function' ? (window as any).require(name) : null; } catch { return null; }
+          };
+          const collections = safeRequire('WAWebCollections');
+          const ChatStore = collections?.Chat || (window as any).Store?.Chat;
+          let list: any[] = [];
+          if (ChatStore) {
+            const arr = typeof ChatStore.getModelsArray === 'function' ? ChatStore.getModelsArray() : (ChatStore.models || []);
+            list = arr.map((c: any) => ({
+              id: c.id?._serialized || (typeof c.id === 'object' ? `${c.id?.user || c.id?.id}@${c.id?.server || 'c.us'}` : String(c.id || '')),
+              name: c.name || c.formattedTitle || '',
+              isGroup: Boolean(c.isGroup),
+              unreadCount: typeof c.unreadCount === 'number' ? c.unreadCount : 0,
+              timestamp: c.t || Math.floor(Date.now() / 1000),
+            }));
+          }
+          if (!list || list.length === 0) {
+            // Second fallback: Extract from #pane-side DOM
+            const pane = document.querySelector('#pane-side');
+            if (pane) {
+              const items = Array.from(pane.querySelectorAll('[role="listitem"], [data-testid="cell-frame-container"]'));
+              list = items.map((el: any) => {
+                const titleEl = el.querySelector('[title]');
+                const name = titleEl?.getAttribute('title') || titleEl?.innerText || '';
+                const text = el.innerText || '';
+                const lines = text.split('\n').filter(Boolean);
+                const unreadMatch = lines.find((l: string) => /^\d+$/.test(l.trim()));
+                return {
+                  id: null,
+                  name: name || lines[0] || 'WhatsApp Chat',
+                  isGroup: text.includes('~') || lines.length > 3,
+                  unreadCount: unreadMatch ? parseInt(unreadMatch, 10) : 0,
+                  timestamp: Math.floor(Date.now() / 1000),
+                  lastSnippet: lines.slice(1, 3).join(' '),
+                };
+              });
+            }
+          }
+          return list;
+        });
+
+        logger.info(`[whatsapp:${accountId}] Chromium page context extracted ${extracted?.length || 0} chats`);
+        if (extracted && extracted.length > 0) {
+          rawChatList = extracted;
+        }
+      } catch (fallbackErr: any) {
+        logger.error(`[whatsapp:${accountId}] pupPage evaluate fallback error:`, fallbackErr?.message || fallbackErr);
+      }
     }
 
     let syncedChats = 0;
     let syncedMessages = 0;
 
-    const chatSlice = chats.slice(0, limitChats);
+    const chatSlice = rawChatList.slice(0, limitChats);
     for (const chat of chatSlice) {
       try {
-        const remoteJid = chat.id?._serialized;
-        if (!remoteJid || remoteJid === 'status@broadcast') continue;
+        const rawId = typeof chat.id === 'string' ? chat.id : (chat.id?._serialized || '');
+        let remoteJid = rawId;
 
-        const isGroup = Boolean(chat.isGroup);
-        const contactPhone = (isGroup ? '' : remoteJid)?.split('@')[0] || '';
+        // If no remoteJid (DOM fallback), generate or find matching conversation
+        if (!remoteJid) {
+          const chatName = chat.name || 'WhatsApp Chat';
+          const existing = await prisma.conversation.findFirst({
+            where: { zaloAccountId: accountId, channel: 'whatsapp', contact: { fullName: chatName } },
+          });
+          remoteJid = existing?.externalThreadId || `wa_chat_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        }
+
+        if (remoteJid === 'status@broadcast') continue;
+
+        const isGroup = Boolean(chat.isGroup || remoteJid.endsWith('@g.us'));
+        const contactPhone = (isGroup ? '' : remoteJid).split('@')[0] || '';
         const chatName = chat.name || chat.formattedTitle || (contactPhone ? `+${contactPhone}` : 'WhatsApp Contact');
         const unreadCount = Number(chat.unreadCount || 0);
 
         let contactAvatar: string | undefined;
         let contactId: string | null = null;
 
-        if (!isGroup) {
-          try {
-            const contact = await chat.getContact();
-            contactAvatar = await contact.getProfilePicUrl().catch(() => undefined);
-          } catch {}
+        if (isGroup) {
+          // Upsert Contact for group so it displays the group name in CRM list
+          const existingGroupContact = await prisma.contact.findFirst({
+            where: {
+              orgId,
+              channel: 'whatsapp',
+              OR: [
+                { whatsappJid: remoteJid },
+                { fullName: chatName },
+              ],
+            },
+          });
+          if (existingGroupContact) {
+            contactId = existingGroupContact.id;
+            if (chatName && existingGroupContact.fullName !== chatName) {
+              await prisma.contact.update({
+                where: { id: existingGroupContact.id },
+                data: { fullName: chatName, whatsappJid: remoteJid },
+              });
+            }
+          } else {
+            const newGroupContact = await prisma.contact.create({
+              data: {
+                id: randomUUID(),
+                orgId,
+                channel: 'whatsapp',
+                whatsappJid: remoteJid,
+                fullName: chatName,
+                metadata: { isGroup: true },
+                status: 'new',
+              },
+            });
+            contactId = newGroupContact.id;
+          }
+        } else {
+          if (typeof chat.getContact === 'function') {
+            try {
+              const contact = await chat.getContact();
+              contactAvatar = await contact.getProfilePicUrl().catch(() => undefined);
+            } catch {}
+          }
 
           // Upsert Contact in database
           const existingContact = await prisma.contact.findFirst({
@@ -2097,10 +2221,40 @@ export class WhatsAppAccountPool {
 
         // Fetch recent messages for this chat
         let msgs: any[] = [];
-        try {
-          msgs = await chat.fetchMessages({ limit: limitMsgs });
-        } catch (fetchErr: any) {
-          logger.warn(`[whatsapp:${accountId}] fetchMessages failed for ${remoteJid}:`, fetchErr?.message || fetchErr);
+        let chatInstance = chat;
+        if (typeof chat.fetchMessages !== 'function' && client.getChatById && remoteJid && remoteJid.includes('@')) {
+          try {
+            chatInstance = await client.getChatById(remoteJid);
+          } catch {}
+        }
+
+        if (typeof chatInstance.fetchMessages === 'function') {
+          try {
+            msgs = await chatInstance.fetchMessages({ limit: limitMsgs });
+          } catch (fetchErr: any) {
+            logger.warn(`[whatsapp:${accountId}] fetchMessages failed for ${remoteJid}:`, fetchErr?.message || fetchErr);
+          }
+        }
+
+        // Fallback for messages: if chat has lastSnippet
+        if (msgs.length === 0 && chat.lastSnippet) {
+          const sentAt = lastMsgDate;
+          const snippetId = `wa_snp_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+          await prisma.message.create({
+            data: {
+              id: randomUUID(),
+              conversationId: conversation.id,
+              zaloMsgId: snippetId,
+              senderType: 'contact',
+              senderUid: remoteJid,
+              senderName: chatName,
+              content: chat.lastSnippet,
+              contentType: 'text',
+              attachments: '[]',
+              sentAt,
+            },
+          }).catch(() => {});
+          syncedMessages++;
         }
 
         for (const msg of msgs) {

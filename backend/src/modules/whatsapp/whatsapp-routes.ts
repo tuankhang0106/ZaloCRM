@@ -103,10 +103,17 @@ export async function whatsappRoutes(app: FastifyInstance): Promise<void> {
             text: el.innerText,
             role: el.getAttribute('role'),
           }));
+          const storeExists = Boolean((window as any).Store);
+          const chatStore = (window as any).Store?.Chat;
+          const chatsInStore = chatStore ? (typeof chatStore.getModelsArray === 'function' ? chatStore.getModelsArray().length : (chatStore.models || []).length) : 0;
+          const paneListItems = document.querySelectorAll('#pane-side [role="listitem"]').length;
           return {
             title: document.title,
             url: window.location.href,
             hasCanvas: Boolean(document.querySelector('canvas')),
+            storeExists,
+            chatsInStore,
+            paneListItems,
             text: document.body.innerText.substring(0, 400),
             buttons,
           };
