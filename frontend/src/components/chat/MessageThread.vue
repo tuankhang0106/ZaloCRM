@@ -2702,12 +2702,21 @@ function getImageUrl(msg: Message): string | null {
   if (getVoiceInfo(msg) !== null) {
     return null;
   }
+  // Check if content is a direct image path (e.g. /uploads/media/xxx.jpg or /api/zalo-assets/media/xxx.jpg or http...jpg)
+  if (typeof msg.content === 'string') {
+    const trimmed = msg.content.trim();
+    if (trimmed.startsWith('/') || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (/\.(jpg|jpeg|png|webp|gif)/i.test(trimmed)) {
+        return trimmed;
+      }
+    }
+  }
   if (msg.contentType === 'image' && msg.content) {
-    if (msg.content.startsWith('http') || msg.content.startsWith('data:') || msg.content.startsWith('blob:')) return msg.content;
+    if (msg.content.startsWith('http') || msg.content.startsWith('data:') || msg.content.startsWith('blob:') || msg.content.startsWith('/')) return msg.content;
     try {
       const p = JSON.parse(msg.content);
       const url = p.href || p.thumb || p.hdUrl || null;
-      if (url && (url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:'))) return url;
+      if (url && (url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/'))) return url;
     } catch {}
   }
   if (msg.content?.startsWith('{')) {
@@ -2721,7 +2730,7 @@ function getImageUrl(msg: Message): string | null {
       if (p.action?.includes('voice') || p.params?.includes?.('waveformSamples')) {
         return null;
       }
-      if (href && (href.startsWith('data:') || href.startsWith('blob:') || /\.(jpg|jpeg|png|webp|gif)/i.test(href) || (href.includes('zdn.vn') && !p.params?.includes('fileExt')))) {
+      if (href && (href.startsWith('data:') || href.startsWith('blob:') || href.startsWith('/') || /\.(jpg|jpeg|png|webp|gif)/i.test(href) || (href.includes('zdn.vn') && !p.params?.includes('fileExt')))) {
         return href;
       }
     } catch {}
@@ -2732,8 +2741,16 @@ function getImageUrl(msg: Message): string | null {
 function getImageThumbUrl(msg: Message): string | null {
   if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file') return null;
   if (getVoiceInfo(msg) !== null) return null;
+  if (typeof msg.content === 'string') {
+    const trimmed = msg.content.trim();
+    if (trimmed.startsWith('/') || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (/\.(jpg|jpeg|png|webp|gif)/i.test(trimmed)) {
+        return trimmed;
+      }
+    }
+  }
   if (msg.contentType === 'image' && msg.content) {
-    if (msg.content.startsWith('http') || msg.content.startsWith('data:') || msg.content.startsWith('blob:')) return msg.content;
+    if (msg.content.startsWith('http') || msg.content.startsWith('data:') || msg.content.startsWith('blob:') || msg.content.startsWith('/')) return msg.content;
     try {
       const p = JSON.parse(msg.content);
       const url = p.thumb || p.href || p.hdUrl || null;
@@ -2757,8 +2774,16 @@ function getImageThumbUrl(msg: Message): string | null {
 function getImageHdUrl(msg: Message): string | null {
   if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file') return null;
   if (getVoiceInfo(msg) !== null) return null;
+  if (typeof msg.content === 'string') {
+    const trimmed = msg.content.trim();
+    if (trimmed.startsWith('/') || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (/\.(jpg|jpeg|png|webp|gif)/i.test(trimmed)) {
+        return trimmed;
+      }
+    }
+  }
   if (msg.contentType === 'image' && msg.content) {
-    if (msg.content.startsWith('http') || msg.content.startsWith('data:') || msg.content.startsWith('blob:')) return msg.content;
+    if (msg.content.startsWith('http') || msg.content.startsWith('data:') || msg.content.startsWith('blob:') || msg.content.startsWith('/')) return msg.content;
     try {
       const p = JSON.parse(msg.content);
       const url = p.hdUrl || p.href || p.thumb || null;
