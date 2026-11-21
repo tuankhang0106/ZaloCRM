@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { portalBridgeRoutes } from './modules/portal/portal-bridge.js';
+import { securePortalSockets } from './modules/portal/portal-sockets.js';
 /**
  * Main application entry point.
  * Bootstraps Fastify server with all plugins, Socket.IO, and route handlers.
@@ -26,6 +28,7 @@ import { contactRoutes } from './modules/contacts/contact-routes.js';
 import { contactSubResourceRoutes } from './modules/contacts/contact-sub-resource-routes.js';
 import { appointmentRoutes } from './modules/contacts/appointment-routes.js';
 import { startAppointmentReminder } from './modules/contacts/appointment-reminder.js';
+import { decryptData } from './utils/crypto.js';
 import { dashboardRoutes } from './modules/dashboard/dashboard-routes.js';
 import { reportRoutes } from './modules/dashboard/report-routes.js';
 import { userRoutes } from './modules/auth/user-routes.js';
@@ -34,6 +37,8 @@ import { orgRoutes } from './modules/auth/org-routes.js';
 import { zaloAccessRoutes } from './modules/zalo/zalo-access-routes.js';
 import { zaloSyncRoutes } from './modules/zalo/zalo-sync-routes.js';
 import { zaloPool } from './modules/zalo/zalo-pool.js';
+import { whatsappPool } from './modules/whatsapp/whatsapp-pool.js';
+import { whatsappRoutes } from './modules/whatsapp/whatsapp-routes.js';
 import { registerZaloSocketHandlers } from './modules/zalo/zalo-socket.js';
 import { notificationRoutes } from './modules/notifications/notification-routes.js';
 import { searchRoutes } from './modules/search/search-routes.js';
@@ -45,23 +50,35 @@ import { customerNeedRoutes } from './modules/customer-needs/customer-need-route
 import { orderRoutes } from './modules/orders/order-routes.js';
 import { pushRoutes } from './modules/push/push-routes.js';
 import fs from 'fs';
-import { attendanceRoutes } from './modules/attendance/attendance-routes.js';
-import { startAttendanceReminder } from './modules/attendance/attendance-reminder.js';
 import { mediaRoutes } from './modules/media/media-routes.js';
 import { zaloExtendedRoutes } from './modules/zalo/zalo-extended-routes.js';
-
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function bootstrap() {
   const app = Fastify({ logger: false, trustProxy: true });
 
+  // Support empty JSON body without FST_ERR_CTP_EMPTY_JSON_BODY error
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    try {
+      const str = typeof body === 'string' ? body : (body ? body.toString('utf-8') : '');
+      if (!str || str.trim() === '') {
+        return done(null, {});
+      }
+      return done(null, JSON.parse(str));
+    } catch (err: any) {
+      return done(err, undefined);
+    }
+  });
+
   // ── Plugins ──────────────────────────────────────────────────────────────
 
+  const allowedOrigins = process.env.PORTAL_ALLOWED_ORIGINS
+    ? process.env.PORTAL_ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : [config.appUrl, 'https://omni.chuoicungung.vn', 'https://portal.chuoicungung.vn', 'https://zalo.tahomart.vn', 'http://localhost:5173', 'http://localhost:5174'];
+
   await app.register(cors, {
-    origin: config.isProduction
-      ? [config.appUrl, 'https://omni.chuoicungung.vn', 'https://portal.chuoicungung.vn', 'https://zalo.tahomart.vn', 'http://localhost:5173', 'http://localhost:5174']
-      : true,
+    origin: config.isProduction ? allowedOrigins : true,
     credentials: true,
   });
 
@@ -79,14 +96,11 @@ async function bootstrap() {
   await app.register(rateLimit, {
     max: 1000,
     timeWindow: '1 minute',
-    // Use different limits for different clients
     keyGenerator: (request) => {
-      // Use API key for authenticated requests
       const apiKey = request.headers['x-api-key'] as string;
       if (apiKey) {
         return `api:${apiKey}`;
       }
-      // Use IP for other requests
       return request.ip;
     },
   });
@@ -105,7 +119,7 @@ async function bootstrap() {
   });
 
   // Serve compiled frontend assets in production
-  if (config.isProduction) {
+  if (config.isProduction && process.env.PORTAL_MANAGED !== 'true') {
     await app.register(fastifyStatic, {
       root: path.join(__dirname, '../static'),
       prefix: '/',
@@ -124,8 +138,9 @@ async function bootstrap() {
   // Attach io to app so route handlers can emit events
   app.decorate('io', io);
 
-  // Pass io to zalo pool for real-time event emission
+  // Pass io to zalo pool and whatsapp pool for real-time event emission
   zaloPool.setIO(io);
+  whatsappPool.setIO(io);
 
   io.on('connection', (socket) => {
     logger.info(`Socket connected: ${socket.id}`);
@@ -134,12 +149,37 @@ async function bootstrap() {
     });
   });
 
-  // Register Zalo Socket.IO event handlers
-  registerZaloSocketHandlers(io);
+  // Register Zalo / Portal Socket.IO event handlers
+  if (process.env.PORTAL_MANAGED === 'true') securePortalSockets(io);
+  else registerZaloSocketHandlers(io);
 
   // ── Routes ────────────────────────────────────────────────────────────────
 
-  await app.register(authRoutes);
+  await app.register(portalBridgeRoutes);
+  if (process.env.PORTAL_MANAGED !== 'true') await app.register(authRoutes);
+  else {
+    app.get(
+      '/api/v1/profile',
+      { preHandler: (await import('./modules/auth/auth-middleware.js')).authMiddleware },
+      async (request) => {
+        const user = await prisma.user.findUnique({
+          where: { id: request.user!.id },
+          include: { org: true },
+        });
+        return user
+          ? {
+              id: user.id,
+              email: user.email,
+              fullName: user.fullName,
+              orgId: user.orgId,
+              role: request.user!.role,
+              org: user.org,
+            }
+          : null;
+      }
+    );
+  }
+
   await app.register(zaloRoutes);
   await app.register(chatRoutes);
   await app.register(groupRoutes);
@@ -161,20 +201,21 @@ async function bootstrap() {
   await app.register(customerNeedRoutes);
   await app.register(handoverRoutes);
   await app.register(pushRoutes);
-  await app.register(attendanceRoutes);
   await app.register(mediaRoutes);
   await app.register(zaloExtendedRoutes);
+  await app.register(whatsappRoutes);
 
-
-  // Liveness/readiness probe — also checks DB connectivity
-  app.get('/health', async () => {
+  // Liveness/readiness probes (support both /health and /api/v1/health)
+  const healthHandler = async () => {
     try {
       await prisma.$queryRaw`SELECT 1`;
       return { status: 'ok', db: 'connected', timestamp: new Date().toISOString() };
     } catch {
       return { status: 'error', db: 'disconnected', timestamp: new Date().toISOString() };
     }
-  });
+  };
+  app.get('/health', healthHandler);
+  app.get('/api/v1/health', healthHandler);
 
   // API version banner
   app.get('/api/v1/status', async () => {
@@ -182,7 +223,7 @@ async function bootstrap() {
   });
 
   // SPA fallback — serve index.html for non-API routes in production
-  if (config.isProduction) {
+  if (config.isProduction && process.env.PORTAL_MANAGED !== 'true') {
     app.setNotFoundHandler(async (request, reply) => {
       if (request.url.startsWith('/api/')) {
         return reply.status(404).send({ error: 'not_found' });
@@ -207,7 +248,7 @@ async function bootstrap() {
     logger.info(`Zalo CRM running on http://${config.host}:${config.port}`);
     logger.info(`Environment: ${config.nodeEnv}`);
 
-    // Ensure database composite indexes exist for ultra-fast query performance
+    // Ensure database composite indexes & columns exist for ultra-fast query performance
     try {
       await prisma.$executeRawUnsafe(
         'CREATE INDEX IF NOT EXISTS idx_messages_conv_sent ON messages (conversation_id, sent_at DESC);'
@@ -231,18 +272,26 @@ async function bootstrap() {
     } catch (idxErr) {
       logger.warn('[database] Composite index setup notice:', idxErr);
     }
-    startAppointmentReminder(io);
-    startAttendanceReminder();
-    startZaloHealthCheck();
+
+    if (process.env.ZALO_AUTOCONNECT !== 'false') {
+      startAppointmentReminder(io);
+      startZaloHealthCheck();
+    }
   } catch (err) {
     logger.error('Failed to start server:', err);
     process.exit(1);
   }
 
+  // Also auto-reconnect connected WhatsApp sessions
+  whatsappPool.autoReconnectAll().catch((err) => {
+    logger.warn('Auto-reconnect WhatsApp accounts failed:', err);
+  });
+
   // Reconnect Zalo accounts that have saved sessions (staggered to avoid rate limits)
   try {
     const accounts = await prisma.zaloAccount.findMany({
       where: {
+        ...(process.env.ZALO_AUTOCONNECT === 'false' ? { id: '__disabled__' } : {}),
         sessionData: { not: Prisma.JsonNull },
         status: { not: 'qr_pending' },
       },
@@ -250,11 +299,11 @@ async function bootstrap() {
     });
     logger.info(`Attempting reconnect for ${accounts.length} Zalo account(s)`);
     for (const account of accounts) {
-      const session = account.sessionData as {
+      const session = decryptData<{
         cookie: any;
         imei: string;
         userAgent: string;
-      } | null;
+      }>(account.sessionData);
       if (session?.imei) {
         // Stagger reconnects: random 20-50 seconds between each account to mimic human logins
         const randomDelay = Math.floor(Math.random() * (50000 - 20000 + 1)) + 20000;
@@ -278,4 +327,3 @@ process.on('unhandledRejection', (reason) => {
 });
 
 bootstrap();
-// Trigger reload to load regenerated Prisma client with new columns
