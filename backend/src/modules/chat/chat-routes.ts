@@ -341,10 +341,10 @@ export async function chatRoutes(app: FastifyInstance) {
       prisma.message.count({ where: { conversationId: id } }),
     ]);
 
-    // On-demand fetch for WhatsApp if conversation currently has 0 messages
-    if (total === 0 && conversation.zaloAccount?.channel === 'whatsapp' && conversation.externalThreadId) {
+    // On-demand fetch for WhatsApp if conversation currently has <= 1 messages
+    if (total <= 1 && conversation.zaloAccount?.channel === 'whatsapp' && conversation.externalThreadId) {
       try {
-        const fetchedCount = await whatsappPool.fetchChatMessages(conversation.zaloAccountId, conversation.externalThreadId, 30);
+        const fetchedCount = await whatsappPool.fetchChatMessages(conversation.zaloAccountId, conversation.externalThreadId, 50);
         if (fetchedCount > 0) {
           [messages, total] = await Promise.all([
             prisma.message.findMany({

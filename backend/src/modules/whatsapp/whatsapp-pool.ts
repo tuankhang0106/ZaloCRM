@@ -2241,289 +2241,13 @@ export class WhatsAppAccountPool {
 
         syncedChats++;
 
-        // Fetch recent messages for this chat
-        let msgs: any[] = [];
-        let chatInstance = chat;
-        if (typeof chat.fetchMessages !== 'function' && client.getChatById && remoteJid && remoteJid.includes('@')) {
-          try {
-            chatInstance = await client.getChatById(remoteJid);
-          } catch {}
-        }
-
-        if (typeof chatInstance.fetchMessages === 'function') {
-          try {
-            msgs = await chatInstance.fetchMessages({ limit: limitMsgs });
-          } catch (fetchErr: any) {
-            logger.warn(`[whatsapp:${accountId}] fetchMessages failed for ${remoteJid}:`, fetchErr?.message || fetchErr);
-          }
-        }
-
-        // Fallback 1: via pupPage evaluate
-        if ((!msgs || msgs.length === 0) && client.pupPage && remoteJid && remoteJid.includes('@')) {
-          try {
-            const pageMsgs = await client.pupPage.evaluate(async (jid: string, maxMsgs: number) => {
-              const safeRequire = (name: string) => {
-                try { return typeof (window as any).require === 'function' ? (window as any).require(name) : null; } catch { return null; }
-              };
-              const collections = safeRequire('WAWebCollections');
-              const ChatStore = collections?.Chat || (window as any).Store?.Chat;
-              const chatModel = ChatStore?.get?.(jid);
-              if (!chatModel) return [];
-
-              try {
-                const cmd = safeRequire('WAWebCmd') || (window as any).Store?.Cmd;
-                if (cmd?.openChatAt) {
-                  await cmd.openChatAt(chatModel);
-                } else if (cmd?.openChatBottom) {
-                  await cmd.openChatBottom(chatModel);
-                }
-              } catch {}
-
-              await new Promise(r => setTimeout(r, 400));
-
-              try {
-                if (typeof chatModel.loadEarlierMsgs === 'function') {
-                  await chatModel.loadEarlierMsgs();
-                } else {
-                  const convMsgs = safeRequire('WAWebChatLoadEarlierMsgs') || (window as any).Store?.ConversationMsgs;
-                  if (convMsgs?.loadEarlierMsgs) {
-                    await convMsgs.loadEarlierMsgs(chatModel);
-                  }
-                }
-              } catch {}
-
-              const msgList = typeof chatModel.msgs?.getModelsArray === 'function'
-                ? chatModel.msgs.getModelsArray()
-                : (chatModel.msgs?.models || chatModel.msgs?._models || []);
-
-              if (msgList && msgList.length > 0) {
-                return msgList.slice(-maxMsgs).map((m: any) => ({
-                  id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
-                  body: m.body || m.caption || '',
-                  fromMe: Boolean(m.fromMe || m.id?.fromMe),
-                  type: m.type || 'chat',
-                  hasMedia: Boolean(m.hasMedia || m.type === 'image' || m.type === 'video' || m.type === 'document' || m.type === 'audio' || m.type === 'ptt'),
-                  timestamp: m.t || Math.floor(Date.now() / 1000),
-                  author: m.author?._serialized || m.author || (m.from?._serialized || m.from || ''),
-                  pushname: m.sender?.pushname || m.pushname || '',
-                }));
-              }
-
-              // Fallback: extract messages from DOM #main
-              const main = document.querySelector('#main');
-              if (main) {
-                const msgEls = Array.from(main.querySelectorAll('.message-in, .message-out'));
-                if (msgEls.length > 0) {
-                  return msgEls.slice(-maxMsgs).map((el: any) => {
-                    const isOut = el.classList.contains('message-out');
-                    const copyable = el.querySelector('.copyable-text');
-                    const prePlainText = copyable?.getAttribute('data-pre-plain-text') || '';
-                    const textEl = el.querySelector('.selectable-text');
-                    const text = (textEl?.innerText || el.innerText || '').trim();
-
-                    let senderName = isOut ? 'Bạn' : '';
-                    if (!isOut && prePlainText) {
-                      const match = prePlainText.match(/\]\s*([^:]+):/);
-                      if (match) senderName = match[1].trim();
-                    }
-
-                    let ts = Math.floor(Date.now() / 1000);
-                    if (prePlainText) {
-                      const timeMatch = prePlainText.match(/\[(\d{1,2}):(\d{2}),\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\]/);
-                      if (timeMatch) {
-                        const [, hh, mm, d, m, y] = timeMatch;
-                        ts = Math.floor(new Date(parseInt(y), parseInt(m) - 1, parseInt(d), parseInt(hh), parseInt(mm)).getTime() / 1000);
-                      }
-                    }
-
-                    return {
-                      id: copyable?.getAttribute('data-id') || null,
-                      body: text,
-                      fromMe: isOut,
-                      type: el.querySelector('img') ? 'image' : 'chat',
-                      hasMedia: Boolean(el.querySelector('img, video, audio')),
-                      timestamp: ts,
-                      author: '',
-                      pushname: senderName,
-                    };
-                  });
-                }
-              }
-
-              return [];
-            }, remoteJid, limitMsgs);
-
-            if (pageMsgs && pageMsgs.length > 0) {
-              msgs = pageMsgs;
-            }
-          } catch (evalErr: any) {
-            logger.debug(`[whatsapp:${accountId}] page msg eval error: ${evalErr?.message || evalErr}`);
-          }
-        }
-
-        // Fallback 2: if fetchMessages returned empty, use chat.lastMessage if present
-        if ((!msgs || msgs.length === 0) && (chat.lastMessage || chat._data?.lastMessage)) {
-          const lm = chat.lastMessage || chat._data?.lastMessage;
-          msgs = [lm];
-        }
-
-        // Fallback 3: for messages: if chat has lastSnippet
-        if ((!msgs || msgs.length === 0) && chat.lastSnippet) {
-          const sentAt = lastMsgDate;
-          const snippetText = String(chat.lastSnippet).trim();
-          const deterministicSnippetId = `wa_snp_${conversation.id}_${sentAt.getTime()}`;
-
-          // Check if snippet or similar message already exists
-          const existingSnippet = await prisma.message.findFirst({
-            where: {
-              conversationId: conversation.id,
-              OR: [
-                { zaloMsgId: deterministicSnippetId },
-                {
-                  content: snippetText,
-                  sentAt: {
-                    gte: new Date(sentAt.getTime() - 30000),
-                    lte: new Date(sentAt.getTime() + 30000),
-                  },
-                },
-              ],
-            },
-          });
-
-          if (!existingSnippet && snippetText) {
-            await prisma.message.create({
-              data: {
-                id: randomUUID(),
-                conversationId: conversation.id,
-                zaloMsgId: deterministicSnippetId,
-                senderType: 'contact',
-                senderUid: remoteJid,
-                senderName: chatName,
-                content: snippetText,
-                contentType: 'text',
-                attachments: '[]',
-                sentAt,
-              },
-            }).catch(() => {});
-            syncedMessages++;
-          }
-        }
-
-        for (const msg of msgs) {
-          try {
-            if (['e2e_notification', 'notification_template', 'call_log', 'gp2', 'protocol'].includes(msg.type)) {
-              continue;
-            }
-
-            const isSelf = Boolean(msg.fromMe);
-            const serializedKey = getSerializedMsgKey(msg) || buildCandidateSerializedIds(
-              msg?.id?.id || msg?._data?.id?.id || '',
-              remoteJid,
-              isSelf,
-              isGroup ? (msg?.id?.participant?._serialized || msg?.id?.participant || msg?.author) : undefined,
-            )[0];
-            const rawMsgId = extractRawMsgId(msg?.id?.id || msg?._data?.id?.id || serializedKey);
-
-            let content = (msg.body || '').trim();
-            let contentType = 'text';
-            const attachments: any[] = [];
-
-            if (msg.hasMedia) {
-              if (msg.type === 'image') contentType = 'image';
-              else if (msg.type === 'video') contentType = 'video';
-              else if (msg.type === 'audio' || msg.type === 'ptt') contentType = 'voice';
-              else if (msg.type === 'document') contentType = 'file';
-              else contentType = 'file';
-              if (!content) {
-                content =
-                  contentType === 'image'
-                    ? '[Hình ảnh]'
-                    : contentType === 'video'
-                    ? '[Video]'
-                    : contentType === 'voice'
-                    ? '[Ghi âm]'
-                    : '[Tài liệu]';
-              }
-            }
-
-            if (!content) content = '[Tin nhắn]';
-
-            const sentAt = msg.timestamp ? new Date(msg.timestamp * 1000) : new Date();
-            const deterministicId = `wa_${conversation.id}_${sentAt.getTime()}_${isSelf ? '1' : '0'}`;
-            const zaloMsgId = serializedKey || rawMsgId || deterministicId;
-
-            // 🚀 Bulletproof Deduplication: check candidate IDs, rawMsgId, deterministicId, AND content + sentAt window!
-            const candidateIds = buildCandidateSerializedIds(serializedKey || rawMsgId, remoteJid, isSelf);
-            candidateIds.push(deterministicId);
-
-            const exists = await prisma.message.findFirst({
-              where: {
-                conversationId: conversation.id,
-                OR: [
-                  { zaloMsgId: { in: candidateIds } },
-                  ...(rawMsgId ? [{ zaloMsgId: rawMsgId }] : []),
-                  {
-                    senderType: isSelf ? 'self' : 'contact',
-                    content,
-                    sentAt: {
-                      gte: new Date(sentAt.getTime() - 20000),
-                      lte: new Date(sentAt.getTime() + 20000),
-                    },
-                  },
-                ],
-              },
-            });
-
-            if (exists) continue;
-
-            const senderAuthor = isGroup ? (isSelf ? '' : (msg.author?._serialized || msg.author || msg.from?._serialized || msg.from || '')) : remoteJid;
-            const senderPhone = senderAuthor ? senderAuthor.split('@')[0] : '';
-            const msgSenderName = isSelf ? 'Bạn' : (msg.pushname || (senderPhone ? `+${senderPhone}` : chatName));
-
-            await prisma.message.create({
-              data: {
-                id: randomUUID(),
-                conversationId: conversation.id,
-                zaloMsgId,
-                senderType: isSelf ? 'self' : 'contact',
-                senderUid: isGroup ? (msg.author || remoteJid) : (isSelf ? (inst.phone || 'self') : remoteJid),
-                senderName: msgSenderName,
-                content,
-                contentType,
-                attachments: attachments.length ? JSON.stringify(attachments) : '[]',
-                sentAt,
-              },
-            });
-
-            syncedMessages++;
-          } catch (msgErr: any) {
-            logger.warn(`[whatsapp:${accountId}] Error syncing message:`, msgErr?.message || msgErr);
-          }
-        }
-
-        // 🚀 Auto-cleanup duplicate messages in this conversation (keeps earliest created record)
+        // Fetch recent messages for this chat via robust fetchChatMessages
         try {
-          const allMsgs = await prisma.message.findMany({
-            where: { conversationId: conversation.id },
-            orderBy: { createdAt: 'asc' },
-          });
-          const seenMinutes = new Set<string>();
-          const toDelete: string[] = [];
-          for (const m of allMsgs) {
-            const key = `${m.senderType}_${(m.content || '').trim()}_${Math.floor(m.sentAt.getTime() / 30000)}`;
-            if (seenMinutes.has(key)) {
-              toDelete.push(m.id);
-            } else {
-              seenMinutes.add(key);
-            }
-          }
-          if (toDelete.length > 0) {
-            await prisma.message.deleteMany({
-              where: { id: { in: toDelete } },
-            });
-            logger.info(`[whatsapp] Cleaned up ${toDelete.length} duplicate messages for conversation ${conversation.id}`);
-          }
-        } catch {}
+          const fetchedCount = await this.fetchChatMessages(accountId, remoteJid, limitMsgs);
+          syncedMessages += fetchedCount;
+        } catch (fetchErr: any) {
+          logger.warn(`[whatsapp:${accountId}] fetchChatMessages error for ${remoteJid}:`, fetchErr?.message || fetchErr);
+        }
 
         // Notify frontends via Socket.IO
         if (this.io) {
@@ -2550,7 +2274,7 @@ export class WhatsAppAccountPool {
   /**
    * Fetch and save recent messages for a specific WhatsApp chat into the database on demand
    */
-  public async fetchChatMessages(accountId: string, remoteJid: string, limit = 30): Promise<number> {
+  public async fetchChatMessages(accountId: string, remoteJid: string, limit = 50): Promise<number> {
     const inst = this.instances.get(accountId);
     if (!inst || !inst.client) return 0;
     const client = inst.client;
@@ -2571,7 +2295,7 @@ export class WhatsAppAccountPool {
       }
 
       // Fallback 1: via pupPage evaluate
-      if ((!msgs || msgs.length === 0) && client.pupPage) {
+      if ((!msgs || msgs.length <= 1) && client.pupPage) {
         try {
           const pageMsgs = await client.pupPage.evaluate(async (jid: string, maxMsgs: number) => {
             const safeRequire = (name: string) => {
@@ -2579,36 +2303,78 @@ export class WhatsAppAccountPool {
             };
             const collections = safeRequire('WAWebCollections');
             const ChatStore = collections?.Chat || (window as any).Store?.Chat;
-            const chatModel = ChatStore?.get?.(jid);
-            if (!chatModel) return [];
-
-            try {
-              const cmd = safeRequire('WAWebCmd') || (window as any).Store?.Cmd;
-              if (cmd?.openChatAt) {
-                await cmd.openChatAt(chatModel);
-              } else if (cmd?.openChatBottom) {
-                await cmd.openChatBottom(chatModel);
+            let chatModel: any = null;
+            if (ChatStore) {
+              try { chatModel = ChatStore.get(jid); } catch {}
+              if (!chatModel && (window as any).Store?.WidFactory?.createWid) {
+                try { chatModel = ChatStore.get((window as any).Store.WidFactory.createWid(jid)); } catch {}
               }
-            } catch {}
+              if (!chatModel) {
+                const arr = typeof ChatStore.getModelsArray === 'function' ? ChatStore.getModelsArray() : (ChatStore.models || ChatStore._models || []);
+                chatModel = arr.find((m: any) => {
+                  const mid = m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.user}@${m.id?.server}` : String(m.id || ''));
+                  return mid === jid || (mid && jid && mid.split('@')[0] === jid.split('@')[0]);
+                });
+              }
+            }
 
-            await new Promise(r => setTimeout(r, 400));
-
-            try {
-              if (typeof chatModel.loadEarlierMsgs === 'function') {
-                await chatModel.loadEarlierMsgs();
-              } else {
-                const convMsgs = safeRequire('WAWebChatLoadEarlierMsgs') || (window as any).Store?.ConversationMsgs;
-                if (convMsgs?.loadEarlierMsgs) {
-                  await convMsgs.loadEarlierMsgs(chatModel);
+            // Open chat in WhatsApp Web UI
+            let openedViaCmd = false;
+            if (chatModel) {
+              try {
+                const cmd = safeRequire('WAWebCmd') || (window as any).Store?.Cmd;
+                if (cmd?.openChatAt) {
+                  await cmd.openChatAt(chatModel);
+                  openedViaCmd = true;
+                } else if (cmd?.openChatBottom) {
+                  await cmd.openChatBottom(chatModel);
+                  openedViaCmd = true;
                 }
-              }
-            } catch {}
+              } catch {}
+            }
 
-            const msgList = typeof chatModel.msgs?.getModelsArray === 'function'
-              ? chatModel.msgs.getModelsArray()
-              : (chatModel.msgs?.models || chatModel.msgs?._models || []);
+            if (!openedViaCmd) {
+              try {
+                const pane = document.querySelector('#pane-side');
+                if (pane) {
+                  const userPart = jid.split('@')[0];
+                  const items = Array.from(pane.querySelectorAll('[role="listitem"]'));
+                  for (const item of items) {
+                    const text = (item as HTMLElement).innerText || '';
+                    if (text.includes(userPart)) {
+                      (item as HTMLElement).click();
+                      break;
+                    }
+                  }
+                }
+              } catch {}
+            }
 
-            if (msgList && msgList.length > 0) {
+            // Wait 600ms for WhatsApp Web to load messages from IndexedDB into memory and DOM
+            await new Promise(r => setTimeout(r, 600));
+
+            if (chatModel) {
+              try {
+                if (typeof chatModel.loadEarlierMsgs === 'function') {
+                  await chatModel.loadEarlierMsgs();
+                } else {
+                  const convMsgs = safeRequire('WAWebChatLoadEarlierMsgs') || (window as any).Store?.ConversationMsgs;
+                  if (convMsgs?.loadEarlierMsgs) {
+                    await convMsgs.loadEarlierMsgs(chatModel);
+                  }
+                }
+              } catch {}
+            }
+
+            // Extract from chatModel.msgs
+            let msgList: any[] = [];
+            if (chatModel && chatModel.msgs) {
+              msgList = typeof chatModel.msgs.getModelsArray === 'function'
+                ? chatModel.msgs.getModelsArray()
+                : (chatModel.msgs?.models || chatModel.msgs?._models || []);
+            }
+
+            if (msgList && msgList.length > 1) {
               return msgList.slice(-maxMsgs).map((m: any) => ({
                 id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
                 body: m.body || m.caption || '',
@@ -2652,8 +2418,8 @@ export class WhatsAppAccountPool {
                     id: copyable?.getAttribute('data-id') || null,
                     body: text,
                     fromMe: isOut,
-                    type: el.querySelector('img') ? 'image' : 'chat',
-                    hasMedia: Boolean(el.querySelector('img, video, audio')),
+                    type: el.querySelector('img') ? 'image' : (el.querySelector('audio, [data-icon="audio-play"]') ? 'voice' : 'chat'),
+                    hasMedia: Boolean(el.querySelector('img, video, audio, [data-icon="audio-play"]')),
                     timestamp: ts,
                     author: '',
                     pushname: senderName,
@@ -2662,13 +2428,28 @@ export class WhatsAppAccountPool {
               }
             }
 
+            if (msgList && msgList.length > 0) {
+              return msgList.slice(-maxMsgs).map((m: any) => ({
+                id: m.id?._serialized || (typeof m.id === 'object' ? `${m.id?.fromMe}_${m.id?.remote?._serialized || m.id?.remote}_${m.id?.id}` : String(m.id || '')),
+                body: m.body || m.caption || '',
+                fromMe: Boolean(m.fromMe || m.id?.fromMe),
+                type: m.type || 'chat',
+                hasMedia: Boolean(m.hasMedia || m.type === 'image' || m.type === 'video' || m.type === 'document' || m.type === 'audio' || m.type === 'ptt'),
+                timestamp: m.t || Math.floor(Date.now() / 1000),
+                author: m.author?._serialized || m.author || (m.from?._serialized || m.from || ''),
+                pushname: m.sender?.pushname || m.pushname || '',
+              }));
+            }
+
             return [];
           }, remoteJid, limit);
 
           if (pageMsgs && pageMsgs.length > 0) {
             msgs = pageMsgs;
           }
-        } catch {}
+        } catch (evalErr: any) {
+          logger.debug(`[whatsapp:${accountId}] pupPage evaluate fetch error: ${evalErr?.message || evalErr}`);
+        }
       }
 
       // Fallback 2: chat.lastMessage
@@ -2759,26 +2540,33 @@ export class WhatsAppAccountPool {
         } catch {}
       }
 
-      // Auto-cleanup duplicate messages in this conversation
+      // Auto-cleanup duplicate messages in this conversation (keeps real WhatsApp IDs over fallback IDs)
       try {
         const allMsgs = await prisma.message.findMany({
           where: { conversationId: conversation.id },
           orderBy: { createdAt: 'asc' },
         });
-        const seenMinutes = new Set<string>();
+        const seenKeys = new Map<string, { id: string; zaloMsgId: string }>();
         const toDelete: string[] = [];
         for (const m of allMsgs) {
           const key = `${m.senderType}_${(m.content || '').trim()}_${Math.floor(m.sentAt.getTime() / 30000)}`;
-          if (seenMinutes.has(key)) {
-            toDelete.push(m.id);
+          if (seenKeys.has(key)) {
+            const prev = seenKeys.get(key)!;
+            if (!m.zaloMsgId?.startsWith('wa_') && prev.zaloMsgId?.startsWith('wa_')) {
+              toDelete.push(prev.id);
+              seenKeys.set(key, { id: m.id, zaloMsgId: m.zaloMsgId || '' });
+            } else {
+              toDelete.push(m.id);
+            }
           } else {
-            seenMinutes.add(key);
+            seenKeys.set(key, { id: m.id, zaloMsgId: m.zaloMsgId || '' });
           }
         }
         if (toDelete.length > 0) {
           await prisma.message.deleteMany({
             where: { id: { in: toDelete } },
           });
+          logger.info(`[whatsapp] Cleaned up ${toDelete.length} duplicate messages for conversation ${conversation.id}`);
         }
       } catch {}
 
@@ -2789,9 +2577,6 @@ export class WhatsAppAccountPool {
     }
   }
 
-  /**
-   * Auto reconnect all existing connected WhatsApp accounts on server startup
-   */
   public async autoReconnectAll(): Promise<void> {
     try {
       const waAccounts = await prisma.zaloAccount.findMany({
