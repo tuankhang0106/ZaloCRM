@@ -1,6 +1,7 @@
 import { ref, computed, watch } from 'vue';
 import { api } from '@/api/index';
 import { io, Socket } from 'socket.io-client';
+import { getSocketServerUrl } from '@/utils/socket-helper';
 import type { Contact } from '@/composables/use-contacts';
 
 function playNotificationSound() {
@@ -89,6 +90,7 @@ export interface Message {
   zaloMsgId: string | null;
   attachments?: any;
   metadata?: any;
+  status?: 'sending' | 'sent' | 'failed';
   repliedBy?: {
     id: string;
     fullName: string;
@@ -102,6 +104,8 @@ export function useChat() {
   const messages = ref<Message[]>([]);
   const loadingConvs = ref(false);
   const loadingMsgs = ref(false);
+  const loadingMoreMsgs = ref(false);
+  const hasMoreMessages = ref(true);
   const sendingMsg = ref(false);
   const searchQuery = ref('');
   const accountFilter = ref<string | null>(null);
@@ -172,13 +176,16 @@ export function useChat() {
     }
   }
 
-  async function fetchMessages(convId: string) {
+  async function fetchMessages(convId: string, limit = 50) {
     loadingMsgs.value = true;
+    hasMoreMessages.value = true;
     try {
       const res = await api.get(`/conversations/${convId}/messages`, {
-        params: { limit: 1000 },
+        params: { limit },
       });
-      messages.value = res.data.messages;
+      messages.value = res.data.messages || [];
+      const total = res.data.total ?? 0;
+      hasMoreMessages.value = total > messages.value.length || messages.value.length >= limit;
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
@@ -186,25 +193,103 @@ export function useChat() {
     }
   }
 
+  async function loadMoreMessages(): Promise<boolean> {
+    if (!selectedConvId.value || loadingMoreMsgs.value || !hasMoreMessages.value) return false;
+    const oldestMsg = messages.value[0];
+    if (!oldestMsg) return false;
+
+    loadingMoreMsgs.value = true;
+    try {
+      const res = await api.get(`/conversations/${selectedConvId.value}/messages`, {
+        params: {
+          limit: 30,
+          before: oldestMsg.sentAt,
+        },
+      });
+      const olderMessages = res.data.messages || [];
+      if (olderMessages.length > 0) {
+        messages.value = [...olderMessages, ...messages.value];
+        hasMoreMessages.value = olderMessages.length >= 30;
+        return true;
+      } else {
+        hasMoreMessages.value = false;
+        return false;
+      }
+    } catch (err) {
+      console.error('Failed to load more messages:', err);
+      return false;
+    } finally {
+      loadingMoreMsgs.value = false;
+    }
+  }
+
   async function sendMessage(content: string, quoteMessageId?: string) {
     if (!selectedConvId.value || !content.trim()) return;
+    const convId = selectedConvId.value;
+    const text = content.trim();
+
+    // 1. OPTIMISTIC UPDATE: Render immediately on screen (0ms delay)
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    let quoteAttachment: any = null;
+    if (quoteMessageId) {
+      const q = messages.value.find(m => m.id === quoteMessageId);
+      if (q) {
+        quoteAttachment = {
+          type: 'quote',
+          fromD: q.senderName || (q.senderType === 'self' ? 'Bạn' : 'Khách hàng'),
+          msg: q.content || '',
+          quoteMessageId: q.id,
+        };
+      }
+    }
+
+    const optimisticMsg: Message = {
+      id: tempId,
+      content: text,
+      contentType: 'text',
+      senderType: 'self',
+      senderName: 'Bạn',
+      sentAt: new Date().toISOString(),
+      isDeleted: false,
+      zaloMsgId: null,
+      attachments: quoteAttachment ? [quoteAttachment] : [],
+      status: 'sending',
+    };
+
+    messages.value.push(optimisticMsg);
+
+    // Update conversation lastMessageAt in sidebar list optimistically
+    const targetConv = conversations.value.find(c => c.id === convId);
+    if (targetConv) {
+      targetConv.lastMessageAt = optimisticMsg.sentAt;
+      targetConv.isReplied = true;
+    }
+
     sendingMsg.value = true;
     try {
-      const res = await api.post(`/conversations/${selectedConvId.value}/messages`, {
-        content,
+      const res = await api.post(`/conversations/${convId}/messages`, {
+        content: text,
         quoteMessageId,
       });
-      const exists = messages.value.find(m => 
-        m.id === res.data.id || 
-        (res.data.zaloMsgId && m.zaloMsgId === res.data.zaloMsgId)
-      );
-      if (!exists) {
-        messages.value.push(res.data);
+
+      const idx = messages.value.findIndex(m => m.id === tempId);
+      if (idx !== -1) {
+        messages.value[idx] = { ...res.data, status: 'sent' };
       } else {
-        Object.assign(exists, res.data);
+        const exists = messages.value.find(m => m.id === res.data.id || (res.data.zaloMsgId && m.zaloMsgId === res.data.zaloMsgId));
+        if (!exists) {
+          messages.value.push({ ...res.data, status: 'sent' });
+        } else {
+          Object.assign(exists, res.data, { status: 'sent' });
+        }
       }
     } catch (err) {
       console.error('Failed to send message:', err);
+      const found = messages.value.find(m => m.id === tempId);
+      if (found) {
+        found.status = 'failed';
+      }
     } finally {
       sendingMsg.value = false;
     }
@@ -241,6 +326,36 @@ export function useChat() {
 
   async function sendFile(file: File, caption?: string) {
     if (!selectedConvId.value) return;
+    const convId = selectedConvId.value;
+    const isImg = file.type.startsWith('image/');
+    const localPreview = URL.createObjectURL(file);
+    const tempId = `temp_file_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    // Optimistic item for photo/file
+    const optimisticMsg: Message = {
+      id: tempId,
+      content: isImg
+        ? JSON.stringify({
+            href: localPreview,
+            thumb: localPreview,
+            hdUrl: localPreview,
+            ...(caption?.trim() ? { title: caption.trim(), caption: caption.trim() } : {}),
+          })
+        : JSON.stringify({
+            title: file.name,
+            href: localPreview,
+            params: JSON.stringify({ fileSize: String(file.size), fileExt: file.name.split('.').pop() || '' }),
+          }),
+      contentType: isImg ? 'image' : 'file',
+      senderType: 'self',
+      senderName: 'Bạn',
+      sentAt: new Date().toISOString(),
+      isDeleted: false,
+      zaloMsgId: null,
+      status: 'sending',
+    };
+    messages.value.push(optimisticMsg);
+
     sendingMsg.value = true;
     try {
       const formData = new FormData();
@@ -248,33 +363,29 @@ export function useChat() {
       if (caption && caption.trim()) {
         formData.append('content', caption.trim());
       }
-      const res = await api.post(`/conversations/${selectedConvId.value}/messages`, formData, {
+      const res = await api.post(`/conversations/${convId}/messages`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
-      if (file.type.startsWith('image/')) {
-        const localPreview = URL.createObjectURL(file);
-        if (!res.data.content || res.data.content.includes('"href":""')) {
-          res.data.content = JSON.stringify({
-            href: localPreview,
-            thumb: localPreview,
-            hdUrl: localPreview,
-            ...(caption?.trim() ? { title: caption.trim(), caption: caption.trim() } : {}),
-          });
-        }
-      }
-      const exists = messages.value.find(m => 
-        m.id === res.data.id || 
-        (res.data.zaloMsgId && m.zaloMsgId === res.data.zaloMsgId)
-      );
-      if (!exists) {
-        messages.value.push(res.data);
+
+      const idx = messages.value.findIndex(m => m.id === tempId);
+      if (idx !== -1) {
+        messages.value[idx] = { ...res.data, status: 'sent' };
       } else {
-        Object.assign(exists, res.data);
+        const exists = messages.value.find(m => m.id === res.data.id || (res.data.zaloMsgId && m.zaloMsgId === res.data.zaloMsgId));
+        if (!exists) {
+          messages.value.push({ ...res.data, status: 'sent' });
+        } else {
+          Object.assign(exists, res.data, { status: 'sent' });
+        }
       }
     } catch (err) {
       console.error('Failed to send file:', err);
+      const found = messages.value.find(m => m.id === tempId);
+      if (found) {
+        found.status = 'failed';
+      }
       throw err;
     } finally {
       sendingMsg.value = false;
@@ -282,31 +393,42 @@ export function useChat() {
   }
 
   function initSocket() {
-    socket = io({ transports: ['websocket', 'polling'] });
+    const socketUrl = getSocketServerUrl();
+    socket = io(socketUrl, {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+
+    socket.on('connect', () => {
+      console.log('[socket] Connected to', socketUrl || 'origin');
+    });
 
     socket.on('chat:message', (data: { message: Message; conversationId: string }) => {
       // Add to messages if viewing this conversation
       if (data.conversationId === selectedConvId.value) {
-        // Avoid duplicates by comparing both id and zaloMsgId
-        const exists = messages.value.find(m => 
-          m.id === data.message.id || 
-          (data.message.zaloMsgId && m.zaloMsgId === data.message.zaloMsgId)
+        // If an optimistic message from self is pending and matches this content, replace it!
+        const pendingIdx = messages.value.findIndex(m =>
+          (m.id.startsWith('temp_') || m.status === 'sending') &&
+          m.senderType === 'self' &&
+          m.content === data.message.content
         );
-        if (!exists) {
-          // If there is an optimistic media message with empty href, replace it!
-          const emptyPlaceholderIdx = messages.value.findIndex(m =>
-            m.senderType === 'self' &&
-            m.content?.startsWith('{') &&
-            m.content?.includes('"href":""')
-          );
-          if (emptyPlaceholderIdx !== -1) {
-            messages.value[emptyPlaceholderIdx] = data.message;
-          } else {
-            messages.value.push(data.message);
-          }
+
+        if (pendingIdx !== -1) {
+          messages.value[pendingIdx] = { ...data.message, status: 'sent' };
         } else {
-          // Update details (like status or newly added zaloMsgId)
-          Object.assign(exists, data.message);
+          const exists = messages.value.find(m =>
+            m.id === data.message.id ||
+            (data.message.zaloMsgId && m.zaloMsgId === data.message.zaloMsgId)
+          );
+          if (!exists) {
+            messages.value.push({ ...data.message, status: 'sent' });
+          } else {
+            Object.assign(exists, data.message, { status: 'sent' });
+          }
         }
       }
 
@@ -522,6 +644,8 @@ export function useChat() {
     messages,
     loadingConvs,
     loadingMsgs,
+    loadingMoreMsgs,
+    hasMoreMessages,
     sendingMsg,
     searchQuery,
     accountFilter,
@@ -533,6 +657,7 @@ export function useChat() {
     trackedMode,
     fetchConversations,
     selectConversation,
+    loadMoreMessages,
     sendMessage,
     forwardMessage,
     recallMessage,

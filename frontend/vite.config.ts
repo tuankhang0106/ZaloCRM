@@ -4,6 +4,7 @@ import vuetify from 'vite-plugin-vuetify';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
+  base: '/crm/',
   plugins: [
     vue(),
     vuetify({ autoImport: true }),

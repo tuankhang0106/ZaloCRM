@@ -9,6 +9,7 @@ import { zaloPool } from '../zalo/zalo-pool.js';
 import { zaloRateLimiter } from '../zalo/zalo-rate-limiter.js';
 import { requireZaloAccess } from '../zalo/zalo-access-middleware.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { optimizeAndSaveImage } from '../../shared/utils/image-optimizer.js';
 
 export async function mediaRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -190,9 +191,8 @@ export async function mediaRoutes(app: FastifyInstance) {
       const ext = path.extname(originalName).toLowerCase() || '.jpg';
       const cleanName = path.basename(originalName, ext);
       const uniqueFilename = `${Date.now()}-${uuidv4().slice(0, 8)}${ext}`;
-      const filePath = path.join(mediaDir, uniqueFilename);
 
-      await fs.promises.writeFile(filePath, buffer);
+      const opt = await optimizeAndSaveImage(buffer, mediaDir, uniqueFilename, { maxThumbWidth: 480, thumbQuality: 75 });
 
       // Extract folderId if provided in fields
       const folderId = (part.fields?.folderId as any)?.value || null;
@@ -202,10 +202,10 @@ export async function mediaRoutes(app: FastifyInstance) {
           orgId: user.orgId,
           folderId: folderId && folderId !== 'null' && folderId !== 'all' ? folderId : null,
           name: cleanName || 'Hình ảnh',
-          filename: uniqueFilename,
+          filename: opt.originalFilename,
           mimeType: part.mimetype || 'image/jpeg',
           size: buffer.length,
-          url: `/uploads/media/${uniqueFilename}`,
+          url: `/uploads/media/${opt.originalFilename}`,
           createdById: user.id,
         },
         include: {

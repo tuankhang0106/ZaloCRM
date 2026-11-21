@@ -32,9 +32,12 @@
       :conversation="selectedConv"
       :messages="messages"
       :loading="loadingMsgs"
+      :loading-more="loadingMoreMsgs"
+      :has-more="hasMoreMessages"
       :sending="sendingMsg"
       @send="sendMessage"
       @send-file="sendFile"
+      @load-more="loadMoreMessages"
       @recall-message="recallMessage"
       @delete-message-for-me="deleteMessageForMe"
       @toggle-mute="handleToggleMute"
@@ -98,9 +101,9 @@ const { mobile } = useDisplay();
 
 const {
   conversations, selectedConvId, selectedConv, messages,
-  loadingConvs, loadingMsgs, sendingMsg, searchQuery, accountFilter,
+  loadingConvs, loadingMsgs, loadingMoreMsgs, hasMoreMessages, sendingMsg, searchQuery, accountFilter,
   tasksMode, trackedMode, unreadMode, categoryFilter, statusFilter, threadTypeFilter,
-  fetchConversations, selectConversation, sendMessage, sendFile,
+  fetchConversations, selectConversation, loadMoreMessages, sendMessage, sendFile,
   recallMessage, deleteMessageForMe,
   initSocket, destroySocket, toggleMute,
 } = useChat();

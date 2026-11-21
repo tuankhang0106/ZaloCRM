@@ -279,7 +279,10 @@
       </aside>
 
       <!-- Messages -->
-      <div ref="messagesContainer" class="flex-grow-1 overflow-y-auto pa-3 chat-messages-area">
+      <div ref="messagesContainer" class="flex-grow-1 overflow-y-auto pa-3 chat-messages-area" @scroll="onChatScroll">
+        <div v-if="loadingMore" class="d-flex justify-center py-2">
+          <v-progress-circular indeterminate size="22" width="2" color="primary" />
+        </div>
         <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2" />
         <template v-for="(msg, index) in messages" :key="msg.id">
           <!-- Date divider header -->
@@ -544,9 +547,9 @@
                   </v-btn>
                 </div>
 
-                <!-- Image -->
+                <!-- Image (Thumbnail WebP for ultra-fast load, click for HD original) -->
                 <div v-else-if="getImageUrl(msg)">
-                  <img :src="getImageUrl(msg)!" alt="Hình ảnh" class="chat-image" @click="openImagePreview(msg)" />
+                  <img :src="getImageThumbUrl(msg) || getImageUrl(msg)!" loading="lazy" alt="Hình ảnh" class="chat-image" @click="openImagePreview(msg)" />
                   <!-- Lời nhắn kèm ảnh -->
                   <div
                     v-if="getImageCaption(msg)"
@@ -779,8 +782,15 @@
                     </span>
                   </div>
 
-                  <!-- Right side: Timestamp -->
-                  <span class="msg-timestamp">{{ formatMessageTime(msg.sentAt) }}</span>
+                  <!-- Right side: Timestamp & Optimistic Status -->
+                  <div class="d-flex align-center" style="gap: 4px;">
+                    <span class="msg-timestamp">{{ formatMessageTime(msg.sentAt) }}</span>
+                    <template v-if="msg.senderType === 'self'">
+                      <v-progress-circular v-if="msg.status === 'sending'" indeterminate size="10" width="1.5" color="white" title="Đang gửi..." />
+                      <v-icon v-else-if="msg.status === 'failed'" size="13" color="#FF5252" title="Gửi thất bại">mdi-alert-circle</v-icon>
+                      <v-icon v-else size="12" style="opacity: 0.85;" title="Đã gửi">mdi-check</v-icon>
+                    </template>
+                  </div>
                 </div>
 
                 <!-- Corner Quick Reaction Badge (Chỉ hiển thị cho tin nhắn đối phương, phía mình không hiển thị) -->
@@ -1664,6 +1674,8 @@ const props = defineProps<{
   messages: Message[];
   loading: boolean;
   sending: boolean;
+  loadingMore?: boolean;
+  hasMore?: boolean;
   showContactPanel?: boolean;
   isMobile?: boolean;
 }>();
@@ -1723,6 +1735,7 @@ function toggleTextFormatting() {
 const emit = defineEmits<{
   send: [content: string, quoteMessageId?: string];
   'send-file': [file: File, caption?: string];
+  'load-more': [];
   'recall-message': [messageId: string];
   'delete-message-for-me': [messageId: string];
   'toggle-mute': [convId: string, isMuted: boolean];
@@ -2718,6 +2731,56 @@ function getImageUrl(msg: Message): string | null {
   return null;
 }
 
+function getImageThumbUrl(msg: Message): string | null {
+  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file') return null;
+  if (getVoiceInfo(msg) !== null) return null;
+  if (msg.contentType === 'image' && msg.content) {
+    if (msg.content.startsWith('http') || msg.content.startsWith('data:') || msg.content.startsWith('blob:')) return msg.content;
+    try {
+      const p = JSON.parse(msg.content);
+      const url = p.thumb || p.href || p.hdUrl || null;
+      if (url && (url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/'))) return url;
+    } catch {}
+  }
+  if (msg.content?.startsWith('{')) {
+    try {
+      const p = JSON.parse(msg.content);
+      const href = p.thumb || p.href || p.hdUrl || '';
+      if (href.includes('voice') || href.includes('.aac') || href.includes('.mp3') || href.includes('.m4a') || href.includes('.wav') || href.includes('.ogg')) return null;
+      if (p.action?.includes('voice') || p.params?.includes?.('waveformSamples')) return null;
+      if (href && (href.startsWith('data:') || href.startsWith('blob:') || href.startsWith('/') || /\.(jpg|jpeg|png|webp|gif)/i.test(href) || (href.includes('zdn.vn') && !p.params?.includes('fileExt')))) {
+        return href;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function getImageHdUrl(msg: Message): string | null {
+  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file') return null;
+  if (getVoiceInfo(msg) !== null) return null;
+  if (msg.contentType === 'image' && msg.content) {
+    if (msg.content.startsWith('http') || msg.content.startsWith('data:') || msg.content.startsWith('blob:')) return msg.content;
+    try {
+      const p = JSON.parse(msg.content);
+      const url = p.hdUrl || p.href || p.thumb || null;
+      if (url && (url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/'))) return url;
+    } catch {}
+  }
+  if (msg.content?.startsWith('{')) {
+    try {
+      const p = JSON.parse(msg.content);
+      const href = p.hdUrl || p.href || p.thumb || '';
+      if (href.includes('voice') || href.includes('.aac') || href.includes('.mp3') || href.includes('.m4a') || href.includes('.wav') || href.includes('.ogg')) return null;
+      if (p.action?.includes('voice') || p.params?.includes?.('waveformSamples')) return null;
+      if (href && (href.startsWith('data:') || href.startsWith('blob:') || href.startsWith('/') || /\.(jpg|jpeg|png|webp|gif)/i.test(href) || (href.includes('zdn.vn') && !p.params?.includes('fileExt')))) {
+        return href;
+      }
+    } catch {}
+  }
+  return null;
+}
+
 /** Extract sticker image URL from Zalo emoticon CDN */
 function getStickerUrl(msg: Message): string | null {
   if (msg.contentType !== 'sticker') return null;
@@ -2796,8 +2859,25 @@ function getImageCaption(msg: Message): string | null {
 }
 
 function openImagePreview(msg: Message) {
-  previewImageUrl.value = getImageUrl(msg) || '';
+  previewImageUrl.value = getImageHdUrl(msg) || getImageUrl(msg) || '';
   previewImageCaption.value = getImageCaption(msg) || '';
+}
+
+function onChatScroll(e: Event) {
+  const el = e.target as HTMLElement;
+  if (!el) return;
+  if (el.scrollTop <= 40 && props.hasMore && !props.loadingMore) {
+    const prevScrollHeight = el.scrollHeight;
+    emit('load-more');
+    const unwatch = watch(() => props.messages.length, () => {
+      nextTick(() => {
+        if (messagesContainer.value) {
+          messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight - prevScrollHeight;
+        }
+      });
+      unwatch();
+    });
+  }
 }
 
 /** Extract file info from JSON content (PDF, docs, etc.) */

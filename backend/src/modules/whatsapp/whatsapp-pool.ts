@@ -1,3 +1,4 @@
+// @ts-ignore
 import wwebjs from 'whatsapp-web.js';
 const { Client, LocalAuth } = wwebjs;
 
@@ -22,6 +23,7 @@ const origInit = (Client as any).prototype.initialize;
   };
   return origInit.apply(this, arguments);
 };
+// @ts-ignore
 import QRCode from 'qrcode';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -31,6 +33,7 @@ import type { Server } from 'socket.io';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { config } from '../../config/index.js';
 import { logger } from '../../shared/utils/logger.js';
+import { optimizeAndSaveImage } from '../../shared/utils/image-optimizer.js';
 import { handleIncomingMessage, type IncomingMessage } from '../chat/message-handler.js';
 import {
   extractRawMsgId,
@@ -648,10 +651,10 @@ export class WhatsAppAccountPool {
             const prefix = msg.type === 'sticker' ? 'wa_sticker' : 'wa';
             const filename = `${prefix}_${Date.now()}_${idSlug}.${ext}`;
             const mediaDir = path.join(path.resolve(config.uploadDir), 'media');
-            await fs.promises.mkdir(mediaDir, { recursive: true });
-            const filepath = path.join(mediaDir, filename);
-            await fs.promises.writeFile(filepath, imgBuffer);
-            const mediaUrl = `/uploads/media/${filename}`;
+
+            const opt = await optimizeAndSaveImage(imgBuffer, mediaDir, filename, { maxThumbWidth: 480, thumbQuality: 75 });
+            const mediaUrl = `/uploads/media/${opt.originalFilename}`;
+            const thumbUrl = `/uploads/media/${opt.thumbFilename}`;
 
             const rawCap =
               msg.type === 'sticker'
@@ -664,7 +667,7 @@ export class WhatsAppAccountPool {
             content = JSON.stringify({
               href: mediaUrl,
               localUrl: mediaUrl,
-              thumb: mediaUrl,
+              thumb: thumbUrl,
               hdUrl: mediaUrl,
               ...(caption ? { title: caption, caption } : {}),
             });

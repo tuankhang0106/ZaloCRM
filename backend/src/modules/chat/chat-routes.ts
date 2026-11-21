@@ -11,6 +11,10 @@ import { zaloPool } from '../zalo/zalo-pool.js';
 import { whatsappPool } from '../whatsapp/whatsapp-pool.js';
 import { zaloRateLimiter } from '../zalo/zalo-rate-limiter.js';
 import { logger } from '../../shared/utils/logger.js';
+import { config } from '../../config/index.js';
+import { optimizeAndSaveImage } from '../../shared/utils/image-optimizer.js';
+import fs from 'node:fs';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 
@@ -301,7 +305,8 @@ export async function chatRoutes(app: FastifyInstance) {
   app.get('/api/v1/conversations/:id/messages', { preHandler: requireZaloAccess('read') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
-    const { page = '1', limit = '50' } = request.query as QueryParams;
+    const { page = '1', limit = '50', before } = request.query as { page?: string; limit?: string; before?: string };
+    const takeLimit = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
 
     const conversation = await prisma.conversation.findFirst({
       where: { id, orgId: user.orgId },
@@ -330,13 +335,23 @@ export async function chatRoutes(app: FastifyInstance) {
       }
     }
 
+    const whereClause: any = { conversationId: id };
+    if (before) {
+      const beforeDate = new Date(before);
+      if (!isNaN(beforeDate.getTime())) {
+        whereClause.sentAt = { lt: beforeDate };
+      }
+    }
+
+    const skipCount = before ? 0 : (Math.max(parseInt(page) || 1, 1) - 1) * takeLimit;
+
     let [messages, total] = await Promise.all([
       prisma.message.findMany({
-        where: { conversationId: id },
+        where: whereClause,
         include: { repliedBy: { select: { id: true, fullName: true, role: true } } },
         orderBy: { sentAt: 'desc' },
-        skip: (parseInt(page) - 1) * parseInt(limit),
-        take: parseInt(limit),
+        skip: skipCount,
+        take: takeLimit,
       }),
       prisma.message.count({ where: { conversationId: id } }),
     ]);
@@ -348,11 +363,11 @@ export async function chatRoutes(app: FastifyInstance) {
         if (fetchedCount > 0) {
           [messages, total] = await Promise.all([
             prisma.message.findMany({
-              where: { conversationId: id },
+              where: whereClause,
               include: { repliedBy: { select: { id: true, fullName: true, role: true } } },
               orderBy: { sentAt: 'desc' },
-              skip: (parseInt(page) - 1) * parseInt(limit),
-              take: parseInt(limit),
+              skip: skipCount,
+              take: takeLimit,
             }),
             prisma.message.count({ where: { conversationId: id } }),
           ]);
@@ -362,7 +377,13 @@ export async function chatRoutes(app: FastifyInstance) {
       }
     }
 
-    return { messages: messages.reverse(), total, page: parseInt(page), limit: parseInt(limit) };
+    return {
+      messages: messages.reverse(),
+      total,
+      hasMore: before ? messages.length >= takeLimit : (skipCount + messages.length) < total,
+      page: parseInt(page) || 1,
+      limit: takeLimit,
+    };
   });
 
   // ── Get conversation assets (images, files, links) ────────────────────────
@@ -476,21 +497,30 @@ export async function chatRoutes(app: FastifyInstance) {
       }
     }
 
-    const instance = zaloPool.getInstance(conversation.zaloAccountId);
-    if (!instance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
+    const isWhatsApp = (conversation.zaloAccount as any)?.channel === 'whatsapp';
+    let zaloInstance: any = null;
 
-    // Rate limit check — prevent account blocking
-    const limits = zaloRateLimiter.checkLimits(conversation.zaloAccountId);
-    if (!limits.allowed) {
-      return reply.status(429).send({ error: limits.reason });
+    if (isWhatsApp) {
+      const waInst = (whatsappPool as any).instances?.get(conversation.zaloAccountId);
+      if (!waInst || waInst.status !== 'connected' || !waInst.client) {
+        return reply.status(400).send({ error: 'Tài khoản WhatsApp chưa kết nối hoặc đã mất phiên' });
+      }
+    } else {
+      zaloInstance = zaloPool.getInstance(conversation.zaloAccountId);
+      if (!zaloInstance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
+
+      // Rate limit check — prevent account blocking
+      const limits = zaloRateLimiter.checkLimits(conversation.zaloAccountId);
+      if (!limits.allowed) {
+        return reply.status(429).send({ error: limits.reason });
+      }
+      zaloRateLimiter.recordSend(conversation.zaloAccountId);
     }
 
     try {
       const threadId = conversation.externalThreadId || '';
       // zca-js sendMessage(message, threadId, type) — type: 0=User, 1=Group
       const threadType = conversation.threadType === 'group' ? 1 : 0;
-
-      zaloRateLimiter.recordSend(conversation.zaloAccountId);
 
       let finalContent = content ? content.trim() : '';
       let finalContentType = 'text';
@@ -563,93 +593,157 @@ export async function chatRoutes(app: FastifyInstance) {
         }
       }
 
-      let res;
+      let res: any;
       if (isFile && fileBuffer) {
-        const isImage = ['jpg', 'jpeg', 'png', 'webp'].includes(fileExt);
-        const attachmentSource: any = {
-          data: fileBuffer,
-          filename: fileName,
-          metadata: {
-            totalSize: fileBuffer.length,
-          },
-        };
+        const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(fileExt);
+        const mediaDir = path.join(path.resolve(config.uploadDir), 'media');
+
+        let savedOriginalUrl = '';
+        let savedThumbUrl = '';
+
         if (isImage) {
-          attachmentSource.metadata.width = 800;
-          attachmentSource.metadata.height = 600;
+          finalContentType = 'image';
+          const baseName = `chat_${Date.now()}_${randomUUID().slice(0, 8)}.${fileExt === 'png' ? 'png' : 'jpg'}`;
+          const opt = await optimizeAndSaveImage(fileBuffer, mediaDir, baseName, { maxThumbWidth: 480, thumbQuality: 75 });
+          savedOriginalUrl = `/uploads/media/${opt.originalFilename}`;
+          savedThumbUrl = `/uploads/media/${opt.thumbFilename}`;
+        } else {
+          finalContentType = 'file';
+          await fs.promises.mkdir(mediaDir, { recursive: true });
+          const safeName = `chat_file_${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          await fs.promises.writeFile(path.join(mediaDir, safeName), fileBuffer);
+          savedOriginalUrl = `/uploads/media/${safeName}`;
         }
 
-        res = await instance.api.sendMessage(
-          { msg: content, attachments: [attachmentSource] },
-          threadId,
-          threadType
-        );
+        if (isWhatsApp) {
+          const mimeType = isImage ? `image/${fileExt === 'png' ? 'png' : 'jpeg'}` : 'application/octet-stream';
+          const sent = await whatsappPool.sendMedia(
+            conversation.zaloAccountId,
+            conversation.externalThreadId || '',
+            fileBuffer,
+            fileName,
+            mimeType,
+            content ? content.trim() : undefined,
+            quoteMessageId ? { quotedMessageId: quoteMessageId } : undefined
+          );
+          res = { id: sent.id, msgId: sent.id };
 
-        if (res?.attachment && res.attachment.length > 0) {
-          const att = res.attachment[0];
-          messageAttachments = [att];
           if (isImage) {
-            finalContentType = 'image';
-            const remoteUrl =
-              att.normalUrl ||
-              att.fileUrl ||
-              att.url ||
-              att.data?.normalUrl ||
-              att.data?.fileUrl ||
-              att.data?.url ||
-              att.data?.hdUrl ||
-              '';
-            const thumbUrl = att.thumbUrl || att.data?.thumbUrl || remoteUrl;
-            const hdUrl = att.hdUrl || att.data?.hdUrl || remoteUrl;
-
-            // Fallback to data URL so optimistic preview displays the image, never empty {"href":"","thumb":"","hdUrl":""}
-            const fallbackDataUrl = `data:image/${fileExt === 'png' ? 'png' : 'jpeg'};base64,${fileBuffer.toString('base64')}`;
-            const activeUrl = remoteUrl || fallbackDataUrl;
-
             finalContent = JSON.stringify({
-              href: activeUrl,
-              thumb: thumbUrl || activeUrl,
-              hdUrl: hdUrl || activeUrl,
+              href: savedOriginalUrl,
+              thumb: savedThumbUrl || savedOriginalUrl,
+              hdUrl: savedOriginalUrl,
               ...(content?.trim() ? { title: content.trim(), caption: content.trim() } : {}),
             });
           } else {
-            finalContentType = 'file';
             finalContent = JSON.stringify({
-              title: att.fileName || att.data?.fileName || fileName,
-              href: att.fileUrl || att.data?.fileUrl || '',
+              title: fileName,
+              href: savedOriginalUrl,
               params: JSON.stringify({
-                fileSize: String(att.totalSize || att.data?.totalSize || fileBuffer.length),
+                fileSize: String(fileBuffer.length),
                 fileExt: fileExt,
               }),
             });
           }
         } else {
-          finalContentType = isImage ? 'image' : 'file';
+          const attachmentSource: any = {
+            data: fileBuffer,
+            filename: fileName,
+            metadata: {
+              totalSize: fileBuffer.length,
+            },
+          };
           if (isImage) {
-            const fallbackDataUrl = `data:image/${fileExt === 'png' ? 'png' : 'jpeg'};base64,${fileBuffer.toString('base64')}`;
-            finalContent = JSON.stringify({
-              href: fallbackDataUrl,
-              thumb: fallbackDataUrl,
-              hdUrl: fallbackDataUrl,
-              ...(content?.trim() ? { title: content.trim(), caption: content.trim() } : {}),
-            });
+            attachmentSource.metadata.width = 800;
+            attachmentSource.metadata.height = 600;
+          }
+
+          res = await zaloInstance.api.sendMessage(
+            { msg: content, attachments: [attachmentSource] },
+            threadId,
+            threadType
+          );
+
+          if (res?.attachment && res.attachment.length > 0) {
+            const att = res.attachment[0];
+            messageAttachments = [att];
+            if (isImage) {
+              finalContentType = 'image';
+              const remoteUrl =
+                att.normalUrl ||
+                att.fileUrl ||
+                att.url ||
+                att.data?.normalUrl ||
+                att.data?.fileUrl ||
+                att.data?.url ||
+                att.data?.hdUrl ||
+                savedOriginalUrl;
+              const thumbUrl = savedThumbUrl || att.thumbUrl || att.data?.thumbUrl || remoteUrl;
+              const hdUrl = att.hdUrl || att.data?.hdUrl || remoteUrl;
+
+              finalContent = JSON.stringify({
+                href: remoteUrl,
+                thumb: thumbUrl,
+                hdUrl: hdUrl,
+                ...(content?.trim() ? { title: content.trim(), caption: content.trim() } : {}),
+              });
+            } else {
+              finalContentType = 'file';
+              finalContent = JSON.stringify({
+                title: att.fileName || att.data?.fileName || fileName,
+                href: att.fileUrl || att.data?.fileUrl || savedOriginalUrl,
+                params: JSON.stringify({
+                  fileSize: String(att.totalSize || att.data?.totalSize || fileBuffer.length),
+                  fileExt: fileExt,
+                }),
+              });
+            }
           } else {
-            finalContent = `[Gửi file: ${fileName}]`;
+            finalContentType = isImage ? 'image' : 'file';
+            if (isImage) {
+              finalContent = JSON.stringify({
+                href: savedOriginalUrl,
+                thumb: savedThumbUrl || savedOriginalUrl,
+                hdUrl: savedOriginalUrl,
+                ...(content?.trim() ? { title: content.trim(), caption: content.trim() } : {}),
+              });
+            } else {
+              finalContent = JSON.stringify({
+                title: fileName,
+                href: savedOriginalUrl,
+                params: JSON.stringify({
+                  fileSize: String(fileBuffer.length),
+                  fileExt: fileExt,
+                }),
+              });
+            }
           }
         }
       } else {
-        if (zaloQuote) {
-          try {
-            res = await instance.api.sendMessage(
-              { msg: content ? content.trim() : '', quote: zaloQuote },
-              threadId,
-              threadType
-            );
-          } catch (quoteErr: any) {
-            logger.warn('[chat] Send with quote failed, falling back to normal send:', quoteErr?.message || quoteErr);
-            res = await instance.api.sendMessage({ msg: content ? content.trim() : '' }, threadId, threadType);
-          }
+        if (isWhatsApp) {
+          const sent = await whatsappPool.sendMessage(
+            conversation.zaloAccountId,
+            conversation.externalThreadId || '',
+            content ? content.trim() : '',
+            undefined,
+            quoteMessageId ? { quotedMessageId: quoteMessageId } : undefined
+          );
+          res = { id: sent.id, msgId: sent.id };
         } else {
-          res = await instance.api.sendMessage({ msg: content ? content.trim() : '' }, threadId, threadType);
+          if (zaloQuote) {
+            try {
+              res = await zaloInstance.api.sendMessage(
+                { msg: content ? content.trim() : '', quote: zaloQuote },
+                threadId,
+                threadType
+              );
+            } catch (quoteErr: any) {
+              logger.warn('[chat] Send with quote failed, falling back to normal send:', quoteErr?.message || quoteErr);
+              res = await zaloInstance.api.sendMessage({ msg: content ? content.trim() : '' }, threadId, threadType);
+            }
+          } else {
+            res = await zaloInstance.api.sendMessage({ msg: content ? content.trim() : '' }, threadId, threadType);
+          }
         }
       }
 

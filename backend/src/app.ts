@@ -59,7 +59,9 @@ async function bootstrap() {
   // ── Plugins ──────────────────────────────────────────────────────────────
 
   await app.register(cors, {
-    origin: config.isProduction ? config.appUrl : true,
+    origin: config.isProduction
+      ? [config.appUrl, 'https://omni.chuoicungung.vn', 'https://portal.chuoicungung.vn', 'https://zalo.tahomart.vn', 'http://localhost:5173', 'http://localhost:5174']
+      : true,
     credentials: true,
   });
 
@@ -114,7 +116,7 @@ async function bootstrap() {
 
   const io = new Server(app.server, {
     cors: {
-      origin: config.isProduction ? config.appUrl : '*',
+      origin: '*',
       credentials: true,
     },
   });
@@ -204,6 +206,19 @@ async function bootstrap() {
     await app.listen({ port: config.port, host: config.host });
     logger.info(`Zalo CRM running on http://${config.host}:${config.port}`);
     logger.info(`Environment: ${config.nodeEnv}`);
+
+    // Ensure database composite indexes exist for ultra-fast query performance
+    try {
+      await prisma.$executeRawUnsafe(
+        'CREATE INDEX IF NOT EXISTS idx_messages_conv_sent ON messages (conversation_id, sent_at DESC);'
+      );
+      await prisma.$executeRawUnsafe(
+        'CREATE INDEX IF NOT EXISTS idx_messages_zalo_msg_id ON messages (zalo_msg_id);'
+      );
+      logger.info('[database] Composite indexes checked/created successfully');
+    } catch (idxErr) {
+      logger.warn('[database] Composite index setup notice:', idxErr);
+    }
     startAppointmentReminder(io);
     startAttendanceReminder();
     startZaloHealthCheck();

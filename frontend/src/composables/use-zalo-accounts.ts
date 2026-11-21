@@ -6,6 +6,7 @@
 import { ref, onUnmounted } from 'vue';
 import { api } from '@/api/index';
 import { io, Socket } from 'socket.io-client';
+import { getSocketServerUrl } from '@/utils/socket-helper';
 
 export interface ZaloAccount {
   id: string;
@@ -150,7 +151,10 @@ export function useZaloAccounts() {
   }
 
   function setupSocket() {
-    socket = io({ transports: ['websocket', 'polling'] });
+    socket = io(getSocketServerUrl(), {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+    });
 
     socket.on('zalo:qr', (data: { accountId: string; qrImage: string }) => {
       if (data.accountId === currentLoginAccountId.value) qrImage.value = data.qrImage;
