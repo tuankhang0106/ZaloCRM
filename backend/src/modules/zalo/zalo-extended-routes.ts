@@ -11,10 +11,14 @@
  * - Chat Interactions (Reactions, Stickers, Voice, Link preview, Seen/Delivered, Poll vote)
  */
 import { createRequire } from 'module';
+import path from 'node:path';
+import fs from 'node:fs';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { config } from '../../config/index.js';
 import { zaloPool } from './zalo-pool.js';
+import { whatsappPool } from '../whatsapp/whatsapp-pool.js';
 import { logger } from '../../shared/utils/logger.js';
 import { reactionCodeToEmoji } from './zalo-listener-factory.js';
 
@@ -1141,7 +1145,7 @@ export async function zaloExtendedRoutes(app: FastifyInstance): Promise<void> {
   // 8. CHAT INTERACTIONS (REACTIONS, STICKERS, VOICE, LINK PREVIEW, POLLS)
   // ══════════════════════════════════════════════════════════════════════════
 
-  // POST add reaction to message
+  // POST add reaction to message (Support both Zalo & WhatsApp)
   app.post<{
     Params: { conversationId: string };
     Body: { zaloMsgId: string; cliMsgId?: string; reaction: string };
@@ -1152,42 +1156,60 @@ export async function zaloExtendedRoutes(app: FastifyInstance): Promise<void> {
 
     const conversation = await prisma.conversation.findFirst({
       where: { id: req.params.conversationId, orgId: user.orgId },
+      include: { contact: true, zaloAccount: true },
     });
     if (!conversation) return reply.status(404).send({ error: 'Không tìm thấy cuộc trò chuyện' });
 
-    const api = zaloPool.getApi(conversation.zaloAccountId);
-    if (!api) return reply.status(400).send({ error: 'Tài khoản Zalo chưa kết nối' });
+    const isWhatsApp = (conversation as any)?.channel === 'whatsapp' || ((conversation as any)?.zaloAccount as any)?.channel === 'whatsapp';
+    const targetThreadId = conversation.externalThreadId || conversation.contact?.zaloUid;
+    if (!targetThreadId) return reply.status(400).send({ error: 'Thiếu externalThreadId hoặc Zalo UID' });
+
+    // 1. Resolve target message in DB
+    const targetMessage = await prisma.message.findFirst({
+      where: {
+        conversationId: conversation.id,
+        OR: [
+          { zaloMsgId: String(zaloMsgId) },
+          ...(cliMsgId ? [{ zaloMsgId: String(cliMsgId) }] : []),
+          { id: String(zaloMsgId) },
+        ],
+      },
+    });
+
+    const effectiveZaloMsgId = targetMessage?.zaloMsgId || zaloMsgId;
 
     try {
-      const targetThreadId = conversation.externalThreadId || conversation.contactId;
-      if (!targetThreadId) return reply.status(400).send({ error: 'Thiếu externalThreadId' });
+      let data: any = null;
+      let emoji: string | null = null;
+      let icon: string | undefined = undefined;
 
-      const icon = resolveReaction(reaction);
-      const isGroup = conversation.threadType === 'group';
+      if (isWhatsApp) {
+        emoji = reaction ? reaction.trim() : null;
+        try {
+          data = await whatsappPool.sendReaction(conversation.zaloAccountId, targetThreadId, String(effectiveZaloMsgId), emoji || '');
+        } catch (waErr: any) {
+          logger.warn(`[reaction:whatsapp] sendReaction error:`, waErr?.message || waErr);
+        }
+      } else {
+        const api = zaloPool.getApi(conversation.zaloAccountId);
+        if (!api) return reply.status(400).send({ error: 'Tài khoản Zalo chưa kết nối' });
 
-      const data = await api.addReaction(icon, {
-        data: {
-          msgId: String(zaloMsgId),
-          cliMsgId: String(cliMsgId || zaloMsgId),
-        },
-        threadId: targetThreadId,
-        type: isGroup ? ThreadType.Group : ThreadType.User,
-      });
+        icon = resolveReaction(reaction);
+        emoji = reactionCodeToEmoji(icon);
+        const isGroup = conversation.threadType === 'group';
+
+        data = await api.addReaction(icon, {
+          data: {
+            msgId: String(effectiveZaloMsgId),
+            cliMsgId: String(cliMsgId || effectiveZaloMsgId),
+          },
+          threadId: targetThreadId,
+          type: isGroup ? ThreadType.Group : ThreadType.User,
+        });
+      }
 
       // Update reaction in DB immediately and broadcast real-time event
       try {
-        const emoji = reactionCodeToEmoji(icon);
-        const targetMessage = await prisma.message.findFirst({
-          where: {
-            conversationId: conversation.id,
-            OR: [
-              { zaloMsgId: String(zaloMsgId) },
-              ...(cliMsgId ? [{ zaloMsgId: String(cliMsgId) }] : []),
-              { id: String(zaloMsgId) },
-            ],
-          },
-        });
-
         if (targetMessage) {
           let attList: any[] = [];
           if (targetMessage.attachments) {
@@ -1200,12 +1222,13 @@ export async function zaloExtendedRoutes(app: FastifyInstance): Promise<void> {
             }
           }
 
-          const ownUid = String(api.getContext?.()?.uid || '0');
+          const api = isWhatsApp ? null : zaloPool.getApi(conversation.zaloAccountId);
+          const ownUid = isWhatsApp ? '' : String(api?.getContext?.()?.uid || '0');
+
           attList = attList.filter((att) => {
             if (!att || typeof att !== 'object') return true;
             if (att.type === 'reaction') {
-              if (att.senderUid && ownUid) return att.senderUid !== ownUid;
-              return false;
+              if (att.isSelf || (ownUid && att.senderUid === ownUid)) return false;
             }
             return true;
           });
@@ -1227,16 +1250,19 @@ export async function zaloExtendedRoutes(app: FastifyInstance): Promise<void> {
           });
 
           const io = zaloPool.getIO();
-          io?.emit('chat:reaction', {
+          const reactionPayload = {
             accountId: conversation.zaloAccountId,
             messageId: targetMessage.id,
-            zaloMsgId: targetMessage.zaloMsgId || String(zaloMsgId),
+            zaloMsgId: targetMessage.zaloMsgId || String(effectiveZaloMsgId),
             conversationId: conversation.id,
             reaction: emoji,
             icon,
             senderUid: ownUid,
             isSelf: true,
-          });
+          };
+          io?.emit('chat:reaction', reactionPayload);
+          io?.to(`account:${conversation.zaloAccountId}`).emit('chat:reaction', reactionPayload);
+          io?.to(`org:${user.orgId}`).emit('chat:reaction', reactionPayload);
         }
       } catch (dbErr) {
         logger.warn(`[extended:reaction] Failed to update reaction in DB:`, dbErr);
@@ -1305,14 +1331,15 @@ export async function zaloExtendedRoutes(app: FastifyInstance): Promise<void> {
 
     const conversation = await prisma.conversation.findFirst({
       where: { id: req.params.conversationId, orgId: user.orgId },
+      include: { contact: true },
     });
     if (!conversation) return reply.status(404).send({ error: 'Không tìm thấy cuộc trò chuyện' });
 
     const api = zaloPool.getApi(conversation.zaloAccountId);
     if (!api) return reply.status(400).send({ error: 'Tài khoản Zalo chưa kết nối' });
 
-    const targetThreadId = conversation.externalThreadId || conversation.contactId;
-    if (!targetThreadId) return reply.status(400).send({ error: 'Thiếu externalThreadId' });
+    const targetThreadId = conversation.externalThreadId || conversation.contact?.zaloUid;
+    if (!targetThreadId) return reply.status(400).send({ error: 'Thiếu externalThreadId hoặc Zalo UID' });
 
     try {
       const isGroup = conversation.threadType === 'group';
@@ -1335,14 +1362,60 @@ export async function zaloExtendedRoutes(app: FastifyInstance): Promise<void> {
 
     const conversation = await prisma.conversation.findFirst({
       where: { id: req.params.conversationId, orgId: user.orgId },
+      include: { contact: true },
     });
     if (!conversation) return reply.status(404).send({ error: 'Không tìm thấy cuộc trò chuyện' });
 
+    const targetThreadId = conversation.externalThreadId || conversation.contact?.zaloUid;
+    if (!targetThreadId) return reply.status(400).send({ error: 'Thiếu externalThreadId hoặc Zalo UID' });
+
+    if ((conversation as any)?.channel === 'whatsapp') {
+      try {
+        let voiceFilePath = voiceUrl;
+        if (voiceUrl.startsWith('/uploads/')) {
+          voiceFilePath = path.join(path.resolve(config.uploadDir), voiceUrl.replace('/uploads/', ''));
+        }
+        const sent = await whatsappPool.sendVoice(conversation.zaloAccountId, targetThreadId, voiceFilePath);
+        const sentAt = new Date();
+        const msgRecord = await prisma.message.create({
+          data: {
+            conversationId: conversation.id,
+            zaloMsgId: sent.id,
+            senderType: 'self',
+            senderName: (user as any).fullName || 'Staff',
+            content: JSON.stringify({
+              href: voiceUrl,
+              voiceUrl: voiceUrl,
+              action: 'voice',
+            }),
+            contentType: 'voice',
+            sentAt,
+            repliedByUserId: user.id,
+          },
+          include: { repliedBy: { select: { id: true, fullName: true, role: true } } },
+        });
+
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { lastMessageAt: sentAt, isReplied: true, unreadCount: 0 },
+        });
+
+        const io = (app as any).io;
+        if (io) {
+          const payload = { ...msgRecord, channel: 'whatsapp', conversationId: conversation.id };
+          io.to(`org:${user.orgId}`).emit('message:new', payload);
+          io.to(`conversation:${conversation.id}`).emit('message:new', payload);
+          io.emit('chat:message', { accountId: conversation.zaloAccountId, message: msgRecord, conversationId: conversation.id });
+        }
+        return { success: true, data: sent, message: msgRecord };
+      } catch (waErr: any) {
+        logger.error(`[extended:whatsapp:voice] sendVoice error:`, waErr);
+        return reply.status(500).send({ error: waErr.message || 'Lỗi khi gửi voice memo WhatsApp' });
+      }
+    }
+
     const api = zaloPool.getApi(conversation.zaloAccountId);
     if (!api) return reply.status(400).send({ error: 'Tài khoản Zalo chưa kết nối' });
-
-    const targetThreadId = conversation.externalThreadId || conversation.contactId;
-    if (!targetThreadId) return reply.status(400).send({ error: 'Thiếu externalThreadId' });
 
     try {
       const isGroup = conversation.threadType === 'group';
@@ -1365,14 +1438,15 @@ export async function zaloExtendedRoutes(app: FastifyInstance): Promise<void> {
 
     const conversation = await prisma.conversation.findFirst({
       where: { id: req.params.conversationId, orgId: user.orgId },
+      include: { contact: true },
     });
     if (!conversation) return reply.status(404).send({ error: 'Không tìm thấy cuộc trò chuyện' });
 
     const api = zaloPool.getApi(conversation.zaloAccountId);
     if (!api) return reply.status(400).send({ error: 'Tài khoản Zalo chưa kết nối' });
 
-    const targetThreadId = conversation.externalThreadId || conversation.contactId;
-    if (!targetThreadId) return reply.status(400).send({ error: 'Thiếu externalThreadId' });
+    const targetThreadId = conversation.externalThreadId || conversation.contact?.zaloUid;
+    if (!targetThreadId) return reply.status(400).send({ error: 'Thiếu externalThreadId hoặc Zalo UID' });
 
     try {
       const isGroup = conversation.threadType === 'group';

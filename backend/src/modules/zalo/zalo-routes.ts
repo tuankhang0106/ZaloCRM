@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireRole } from '../auth/role-middleware.js';
 import { zaloPool } from './zalo-pool.js';
+import { whatsappPool } from '../whatsapp/whatsapp-pool.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { Prisma } from '@prisma/client';
 import { logger } from '../../shared/utils/logger.js';
@@ -20,7 +21,7 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/zalo-accounts', async (request) => {
     const user = request.user!;
     const accounts = await prisma.zaloAccount.findMany({
-      where: { orgId: user.orgId },
+      where: { orgId: user.orgId, ...(['owner', 'admin', 'accountant'].includes(user.role) ? {} : {access:{some:{userId:user.id}}}) },
       select: {
         id: true,
         zaloUid: true,
@@ -35,11 +36,16 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
       orderBy: { createdAt: 'asc' },
     });
 
-    // Merge live status from pool
-    return accounts.map((a) => ({
-      ...a,
-      liveStatus: zaloPool.getStatus(a.id),
-    }));
+    // Merge live status from respective pool
+    return accounts.map((a) => {
+      const ch = (a as any).channel || 'zalo';
+      return {
+        ...a,
+        channel: ch,
+        liveStatus: ch === 'whatsapp' ? whatsappPool.getStatus(a.id) : zaloPool.getStatus(a.id),
+        qrCode: ch === 'whatsapp' ? whatsappPool.getQr(a.id) : undefined,
+      };
+    });
   });
 
   // POST /api/v1/zalo-accounts — create a new account record
@@ -75,6 +81,11 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
       });
       if (!account) {
         return reply.status(404).send({ error: 'Account not found' });
+      }
+
+      if ((account as any)?.channel === 'whatsapp') {
+        whatsappPool.initWhatsApp(id, user.orgId, user.id).catch(() => {});
+        return { message: 'WhatsApp QR login initiated' };
       }
 
       // Fire-and-forget — QR delivered via Socket.IO
@@ -132,7 +143,17 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'Account not found' });
       }
 
-      zaloPool.disconnect(id);
+      if ((account as any)?.channel === 'whatsapp') {
+        await whatsappPool.disconnect(id);
+        zaloPool.getIO()?.emit('whatsapp:disconnected', { accountId: id });
+        return { success: true, message: 'Đã ngắt kết nối tài khoản WhatsApp. Lịch sử chat được giữ nguyên.' };
+      }
+
+      if ((account as any)?.channel === 'whatsapp') {
+        await whatsappPool.disconnect(id);
+      } else {
+        zaloPool.disconnect(id);
+      }
       await prisma.zaloAccount.update({
         where: { id },
         data: {
@@ -193,7 +214,11 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'Account not found' });
       }
 
-      zaloPool.disconnect(id);
+      if ((account as any)?.channel === 'whatsapp') {
+        await whatsappPool.disconnect(id);
+      } else {
+        zaloPool.disconnect(id);
+      }
 
       if (purge === 'true') {
         // Hard purge: permanently remove account and cascade delete all conversations & messages
