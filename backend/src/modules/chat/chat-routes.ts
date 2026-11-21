@@ -1259,13 +1259,23 @@ export async function chatRoutes(app: FastifyInstance) {
           }
         }
 
-        const instance = zaloPool.getInstance(targetConv.zaloAccountId);
-        if (!instance?.api) continue;
+        const isTargetWhatsApp = (targetConv.zaloAccount as any)?.channel === 'whatsapp';
+        let zaloInstance: any = null;
+        let waInst: any = null;
+
+        if (isTargetWhatsApp) {
+          waInst = (whatsappPool as any).instances?.get(targetConv.zaloAccountId);
+          if (!waInst || waInst.status !== 'connected' || !waInst.client) continue;
+        } else {
+          zaloInstance = zaloPool.getInstance(targetConv.zaloAccountId);
+          if (!zaloInstance?.api) continue;
+        }
 
         const targetThreadId = targetConv.externalThreadId || '';
         const targetThreadType = targetConv.threadType === 'group' ? 1 : 0;
 
         const isImage = sourceMessage.contentType === 'image';
+        const isFile = sourceMessage.contentType === 'file';
         const forwardAttachment = {
           type: 'forwarded',
           originalSender: sourceMessage.senderName || 'Người dùng',
@@ -1282,62 +1292,116 @@ export async function chatRoutes(app: FastifyInstance) {
               const p = JSON.parse(sourceMessage.content);
               imageUrl = p.hdUrl || p.normalUrl || p.href || p.thumb || p.fileUrl || '';
             } catch {}
+          } else {
+            imageUrl = sourceMessage.content || '';
           }
 
           let imgBuffer: Buffer | null = null;
           if (imageUrl) {
             try {
-              const sourceInstance = zaloPool.getInstance(sourceMessage.conversation.zaloAccountId);
-              const headers: Record<string, string> = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              };
-              if (sourceInstance?.api) {
-                try {
-                  const ctx = sourceInstance.api.getContext();
-                  const cookie = await ctx.cookie.getCookieString(imageUrl);
-                  if (cookie) headers['Cookie'] = cookie;
-                } catch {}
+              // 1. Check if it's a local file (/uploads/... or /api/zalo-assets/...)
+              const isLocal = imageUrl.startsWith('/uploads/') || imageUrl.startsWith('/api/zalo-assets/') || (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://'));
+              if (isLocal) {
+                let relPath = imageUrl;
+                if (relPath.startsWith('/api/zalo-assets/')) {
+                  relPath = relPath.slice('/api/zalo-assets/'.length);
+                } else if (relPath.startsWith('/uploads/')) {
+                  relPath = relPath.slice('/uploads/'.length);
+                }
+                const uploadRoot = path.resolve(config.uploadDir);
+                const localFilePath = path.join(uploadRoot, relPath);
+                if (fs.existsSync(localFilePath)) {
+                  imgBuffer = await fs.promises.readFile(localFilePath);
+                } else {
+                  const mediaPath = path.join(uploadRoot, 'media', path.basename(relPath));
+                  if (fs.existsSync(mediaPath)) {
+                    imgBuffer = await fs.promises.readFile(mediaPath);
+                  }
+                }
               }
-              const imgRes = await fetch(imageUrl, { headers });
-              if (imgRes.ok) {
-                imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+
+              // 2. If not local or local not found, fetch via HTTP
+              if (!imgBuffer && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
+                const sourceInstance = zaloPool.getInstance(sourceMessage.conversation.zaloAccountId);
+                const headers: Record<string, string> = {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                };
+                if (sourceInstance?.api) {
+                  try {
+                    const ctx = sourceInstance.api.getContext();
+                    const cookie = await ctx.cookie.getCookieString(imageUrl);
+                    if (cookie) headers['Cookie'] = cookie;
+                  } catch {}
+                }
+                const imgRes = await fetch(imageUrl, { headers });
+                if (imgRes.ok) {
+                  imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+                }
               }
             } catch (dlErr) {
-              logger.error('[chat-forward] Error downloading image:', dlErr);
+              logger.error('[chat-forward] Error loading image:', dlErr);
             }
           }
 
           if (imgBuffer) {
-            const attachmentSource: any = {
-              data: imgBuffer,
-              filename: 'forwarded_image.jpg',
-              metadata: {
-                totalSize: imgBuffer.length,
-                width: 800,
-                height: 600,
-              },
-            };
-
-            const sendRes = await instance.api.sendMessage(
-              { msg: extraText ? extraText.trim() : '', attachments: [attachmentSource] },
-              targetThreadId,
-              targetThreadType
-            );
-
-            const attList: any[] = [forwardAttachment];
+            let zaloMsgId: string | null = null;
             let finalContent = sourceMessage.content || '';
-            if (sendRes?.attachment && sendRes.attachment.length > 0) {
-              const att = sendRes.attachment[0];
-              attList.unshift(att);
+            const attList: any[] = [forwardAttachment];
+
+            if (isTargetWhatsApp) {
+              const sent = await whatsappPool.sendMedia(
+                targetConv.zaloAccountId,
+                targetThreadId,
+                imgBuffer,
+                'forwarded_image.jpg',
+                'image/jpeg',
+                extraText ? extraText.trim() : undefined
+              );
+              zaloMsgId = sent?.id || null;
               finalContent = JSON.stringify({
-                href: att.normalUrl || att.fileUrl || imageUrl,
-                thumb: att.thumbUrl || att.fileUrl || imageUrl,
-                hdUrl: att.hdUrl || att.fileUrl || imageUrl,
+                href: imageUrl,
+                thumb: imageUrl,
+                hdUrl: imageUrl,
                 ...(extraText?.trim() ? { title: extraText.trim(), caption: extraText.trim() } : {}),
               });
+            } else {
+              const attachmentSource: any = {
+                data: imgBuffer,
+                filename: 'forwarded_image.jpg',
+                metadata: {
+                  totalSize: imgBuffer.length,
+                  width: 800,
+                  height: 600,
+                },
+              };
+
+              const sendRes = await zaloInstance.api.sendMessage(
+                { msg: extraText ? extraText.trim() : '', attachments: [attachmentSource] },
+                targetThreadId,
+                targetThreadType
+              );
+
+              if (sendRes?.attachment && sendRes.attachment.length > 0) {
+                const att = sendRes.attachment[0];
+                attList.unshift(att);
+                finalContent = JSON.stringify({
+                  href: att.normalUrl || att.fileUrl || imageUrl,
+                  thumb: att.thumbUrl || att.fileUrl || imageUrl,
+                  hdUrl: att.hdUrl || att.fileUrl || imageUrl,
+                  ...(extraText?.trim() ? { title: extraText.trim(), caption: extraText.trim() } : {}),
+                });
+              } else {
+                finalContent = JSON.stringify({
+                  href: imageUrl,
+                  thumb: imageUrl,
+                  hdUrl: imageUrl,
+                  ...(extraText?.trim() ? { title: extraText.trim(), caption: extraText.trim() } : {}),
+                });
+              }
+
+              zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
             }
 
-            const zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
             const newMsg = await prisma.message.create({
               data: {
                 id: randomUUID(),
@@ -1366,8 +1430,152 @@ export async function chatRoutes(app: FastifyInstance) {
             results.push(newMsg);
           } else {
             const textContent = `${imageUrl || '[Hình ảnh]'}${extraText ? `\n${extraText}` : ''}`;
-            const sendRes = await instance.api.sendMessage({ msg: textContent }, targetThreadId, targetThreadType);
-            const zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
+            let zaloMsgId: string | null = null;
+            if (isTargetWhatsApp) {
+              const sent = await whatsappPool.sendMessage(targetConv.zaloAccountId, targetThreadId, textContent);
+              zaloMsgId = sent?.id || null;
+            } else {
+              const sendRes = await zaloInstance.api.sendMessage({ msg: textContent }, targetThreadId, targetThreadType);
+              zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
+            }
+            const newMsg = await prisma.message.create({
+              data: {
+                id: randomUUID(),
+                conversationId: targetId,
+                zaloMsgId,
+                senderType: 'self',
+                senderUid: targetConv.zaloAccount.zaloUid || '',
+                senderName: 'Staff',
+                content: textContent,
+                contentType: 'text',
+                attachments: [forwardAttachment],
+                sentAt: new Date(),
+                repliedByUserId: user.id,
+              },
+              include: {
+                repliedBy: { select: { id: true, fullName: true, role: true } },
+              },
+            });
+
+            await prisma.conversation.update({
+              where: { id: targetId },
+              data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+            });
+
+            io?.emit('chat:message', { accountId: targetConv.zaloAccountId, message: newMsg, conversationId: targetId });
+            results.push(newMsg);
+          }
+        } else if (isFile) {
+          let fileHref = '';
+          let fileName = 'forwarded_file';
+          if (sourceMessage.content?.startsWith('{')) {
+            try {
+              const p = JSON.parse(sourceMessage.content);
+              fileHref = p.href || p.fileUrl || p.url || '';
+              fileName = p.title || p.fileName || p.name || 'forwarded_file';
+            } catch {}
+          } else {
+            fileHref = sourceMessage.content || '';
+          }
+
+          let fileBuffer: Buffer | null = null;
+          if (fileHref) {
+            try {
+              const isLocal = fileHref.startsWith('/uploads/') || fileHref.startsWith('/api/zalo-assets/') || (!fileHref.startsWith('http://') && !fileHref.startsWith('https://'));
+              if (isLocal) {
+                let relPath = fileHref;
+                if (relPath.startsWith('/api/zalo-assets/')) {
+                  relPath = relPath.slice('/api/zalo-assets/'.length);
+                } else if (relPath.startsWith('/uploads/')) {
+                  relPath = relPath.slice('/uploads/'.length);
+                }
+                const uploadRoot = path.resolve(config.uploadDir);
+                const localFilePath = path.join(uploadRoot, relPath);
+                if (fs.existsSync(localFilePath)) {
+                  fileBuffer = await fs.promises.readFile(localFilePath);
+                } else {
+                  const mediaPath = path.join(uploadRoot, 'media', path.basename(relPath));
+                  if (fs.existsSync(mediaPath)) {
+                    fileBuffer = await fs.promises.readFile(mediaPath);
+                  }
+                }
+              }
+
+              if (!fileBuffer && (fileHref.startsWith('http://') || fileHref.startsWith('https://'))) {
+                const fRes = await fetch(fileHref);
+                if (fRes.ok) {
+                  fileBuffer = Buffer.from(await fRes.arrayBuffer());
+                }
+              }
+            } catch (fErr) {
+              logger.error('[chat-forward] Error loading file:', fErr);
+            }
+          }
+
+          if (fileBuffer) {
+            let zaloMsgId: string | null = null;
+            if (isTargetWhatsApp) {
+              const sent = await whatsappPool.sendMedia(
+                targetConv.zaloAccountId,
+                targetThreadId,
+                fileBuffer,
+                fileName,
+                'application/octet-stream',
+                extraText ? extraText.trim() : undefined
+              );
+              zaloMsgId = sent?.id || null;
+            } else {
+              const attachmentSource: any = {
+                data: fileBuffer,
+                filename: fileName,
+                metadata: {
+                  totalSize: fileBuffer.length,
+                },
+              };
+              const sendRes = await zaloInstance.api.sendMessage(
+                { msg: extraText ? extraText.trim() : '', attachments: [attachmentSource] },
+                targetThreadId,
+                targetThreadType
+              );
+              zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
+            }
+
+            const newMsg = await prisma.message.create({
+              data: {
+                id: randomUUID(),
+                conversationId: targetId,
+                zaloMsgId,
+                senderType: 'self',
+                senderUid: targetConv.zaloAccount.zaloUid || '',
+                senderName: 'Staff',
+                content: sourceMessage.content || '',
+                contentType: 'file',
+                attachments: [forwardAttachment],
+                sentAt: new Date(),
+                repliedByUserId: user.id,
+              },
+              include: {
+                repliedBy: { select: { id: true, fullName: true, role: true } },
+              },
+            });
+
+            await prisma.conversation.update({
+              where: { id: targetId },
+              data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+            });
+
+            io?.emit('chat:message', { accountId: targetConv.zaloAccountId, message: newMsg, conversationId: targetId });
+            results.push(newMsg);
+          } else {
+            const textContent = `${fileName || '[Tệp đính kèm]'}${extraText ? `\n${extraText}` : ''}`;
+            let zaloMsgId: string | null = null;
+            if (isTargetWhatsApp) {
+              const sent = await whatsappPool.sendMessage(targetConv.zaloAccountId, targetThreadId, textContent);
+              zaloMsgId = sent?.id || null;
+            } else {
+              const sendRes = await zaloInstance.api.sendMessage({ msg: textContent }, targetThreadId, targetThreadType);
+              zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
+            }
             const newMsg = await prisma.message.create({
               data: {
                 id: randomUUID(),
@@ -1398,8 +1606,14 @@ export async function chatRoutes(app: FastifyInstance) {
         } else {
           // Forwarding text message
           const textToForward = sourceMessage.content || '';
-          const sendRes = await instance.api.sendMessage({ msg: textToForward }, targetThreadId, targetThreadType);
-          const zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
+          let zaloMsgId: string | null = null;
+          if (isTargetWhatsApp) {
+            const sent = await whatsappPool.sendMessage(targetConv.zaloAccountId, targetThreadId, textToForward);
+            zaloMsgId = sent?.id || null;
+          } else {
+            const sendRes = await zaloInstance.api.sendMessage({ msg: textToForward }, targetThreadId, targetThreadType);
+            zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
+          }
 
           const newMsg = await prisma.message.create({
             data: {
@@ -1429,8 +1643,14 @@ export async function chatRoutes(app: FastifyInstance) {
           results.push(newMsg);
 
           if (extraText?.trim()) {
-            const extraRes = await instance.api.sendMessage({ msg: extraText.trim() }, targetThreadId, targetThreadType);
-            const extraZaloMsgId = extraRes?.messageId || extraRes?.msgId || extraRes?.id || null;
+            let extraZaloMsgId: string | null = null;
+            if (isTargetWhatsApp) {
+              const extraSent = await whatsappPool.sendMessage(targetConv.zaloAccountId, targetThreadId, extraText.trim());
+              extraZaloMsgId = extraSent?.id || null;
+            } else {
+              const extraRes = await zaloInstance.api.sendMessage({ msg: extraText.trim() }, targetThreadId, targetThreadType);
+              extraZaloMsgId = extraRes?.messageId || extraRes?.msgId || extraRes?.id || null;
+            }
             const extraMsg = await prisma.message.create({
               data: {
                 id: randomUUID(),
