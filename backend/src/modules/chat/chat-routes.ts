@@ -82,10 +82,11 @@ export async function chatRoutes(app: FastifyInstance) {
   // ── List conversations (paginated) ──────────────────────────────────────
   app.get('/api/v1/conversations', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
-    const { page = '1', limit = '50', search = '', accountId = '', uncompletedOnly = '', unreadOnly = '', category = '', threadType = '', status = '' } = request.query as QueryParams;
+    const { page = '1', limit = '50', search = '', accountId = '', uncompletedOnly = '', unreadOnly = '', category = '', threadType = '', status = '', channel = '' } = request.query as QueryParams;
 
     const where: any = { orgId: user.orgId };
     if (accountId) where.zaloAccountId = accountId;
+    if (channel) where.channel = channel;
     if (unreadOnly === 'true') where.unreadCount = { gt: 0 };
     if (threadType === 'user' || threadType === 'group') where.threadType = threadType;
 
@@ -248,8 +249,8 @@ export async function chatRoutes(app: FastifyInstance) {
       prisma.conversation.findMany({
         where,
         include: {
-          contact: { select: { id: true, fullName: true, phone: true, avatarUrl: true, zaloUid: true, status: true, notes: true, tags: true, metadata: true } },
-          zaloAccount: { select: { id: true, displayName: true, zaloUid: true, status: true } },
+          contact: { select: { id: true, fullName: true, phone: true, avatarUrl: true, zaloUid: true, whatsappJid: true, channel: true, status: true, notes: true, tags: true, metadata: true } },
+          zaloAccount: { select: { id: true, displayName: true, zaloUid: true, status: true, channel: true } },
           messages: {
             take: 1,
             orderBy: { sentAt: 'desc' },

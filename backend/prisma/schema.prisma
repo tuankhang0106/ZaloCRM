@@ -83,6 +83,7 @@ model ZaloAccount {
   id              String    @id @default(uuid())
   orgId           String    @map("org_id")
   ownerUserId     String    @map("owner_user_id")
+  channel         String    @default("zalo") // zalo, whatsapp
   zaloUid         String?   @unique @map("zalo_uid")
   displayName     String?   @map("display_name")
   avatarUrl       String?   @map("avatar_url")
@@ -121,7 +122,9 @@ model ZaloAccountAccess {
 model Contact {
   id               String    @id @default(uuid())
   orgId            String    @map("org_id")
+  channel          String?   @default("zalo") // zalo, whatsapp
   zaloUid          String?   @map("zalo_uid")
+  whatsappJid      String?   @map("whatsapp_jid")
   phone            String?
   email            String?   @map("email")
   fullName         String?   @map("full_name")
@@ -153,6 +156,7 @@ model Conversation {
   orgId            String    @map("org_id")
   zaloAccountId    String    @map("zalo_account_id")
   contactId        String?   @map("contact_id")
+  channel          String    @default("zalo") // zalo, whatsapp
   threadType       String    @default("user") // user, group
   externalThreadId String?   @map("external_thread_id")
   lastMessageAt    DateTime? @map("last_message_at")

@@ -215,7 +215,19 @@ async function bootstrap() {
       await prisma.$executeRawUnsafe(
         'CREATE INDEX IF NOT EXISTS idx_messages_zalo_msg_id ON messages (zalo_msg_id);'
       );
-      logger.info('[database] Composite indexes checked/created successfully');
+      await prisma.$executeRawUnsafe(
+        "ALTER TABLE zalo_accounts ADD COLUMN IF NOT EXISTS channel TEXT DEFAULT 'zalo';"
+      );
+      await prisma.$executeRawUnsafe(
+        "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS channel TEXT DEFAULT 'zalo';"
+      );
+      await prisma.$executeRawUnsafe(
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS channel TEXT DEFAULT 'zalo';"
+      );
+      await prisma.$executeRawUnsafe(
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS whatsapp_jid TEXT;"
+      );
+      logger.info('[database] Composite indexes and columns checked/created successfully');
     } catch (idxErr) {
       logger.warn('[database] Composite index setup notice:', idxErr);
     }
