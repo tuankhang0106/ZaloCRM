@@ -7,6 +7,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
 import { emitWebhook } from '../api/webhook-service.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
+import { sendTelegramCustomerAlert } from '../../shared/services/telegram-notification.js';
 
 // Cooldown cache to prevent spamming Zalo groups: conversationId -> timestamp of last notification
 const alertCooldowns = new Map<string, number>();
@@ -109,7 +110,7 @@ export async function handleIncomingMessage(
   try {
     const account = await prisma.zaloAccount.findUnique({
       where: { id: msg.accountId },
-      select: { orgId: true, ownerUserId: true, displayName: true },
+      select: { orgId: true, ownerUserId: true, displayName: true, org: { select: { name: true } } },
     });
     if (!account) return null;
 
@@ -236,6 +237,24 @@ export async function handleIncomingMessage(
       contentType: msg.contentType,
       sentAt: message.sentAt,
     });
+
+    // Gửi thông báo đến Telegram Bot khi có khách hàng gửi tin nhắn mới (Zalo CRM)
+    if (!msg.isSelf) {
+      const customerDisplayName = msg.threadType === 'group'
+        ? (msg.senderName ? `${msg.senderName} (${msg.groupName || 'Nhóm'})` : (msg.groupName || 'Nhóm'))
+        : (msg.senderName || 'Khách hàng');
+
+      sendTelegramCustomerAlert({
+        customerName: customerDisplayName,
+        accountDisplayName: account.displayName,
+        brandName: account.org?.name,
+        content: msg.content,
+        contentType: msg.contentType,
+        channel: 'zalo',
+        orgId: account.orgId,
+        attachments: msg.attachments,
+      });
+    }
 
     // Trigger Zalo Group Notification Alert in background if new customer inquiry
     if (!msg.isSelf && msg.threadType === 'user' && (isNewConversation || wasReplied)) {
