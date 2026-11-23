@@ -103,6 +103,9 @@ export function useChat() {
   const selectedConvId = ref<string | null>(null);
   const messages = ref<Message[]>([]);
   const loadingConvs = ref(false);
+  const loadingMoreConvs = ref(false);
+  const hasMoreConvs = ref(true);
+  const convPage = ref(1);
   const loadingMsgs = ref(false);
   const loadingMoreMsgs = ref(false);
   const hasMoreMessages = ref(true);
@@ -131,9 +134,40 @@ export function useChat() {
 
   async function fetchConversations() {
     loadingConvs.value = true;
+    convPage.value = 1;
+    hasMoreConvs.value = true;
     try {
       const res = await api.get('/conversations', {
         params: {
+          page: 1,
+          limit: 150,
+          search: searchQuery.value,
+          accountId: accountFilter.value || undefined,
+          threadType: threadTypeFilter.value || undefined,
+          category: categoryFilter.value || undefined,
+          status: statusFilter.value || undefined,
+          unreadOnly: unreadMode.value ? 'true' : undefined,
+          uncompletedOnly: tasksMode.value ? 'true' : (trackedMode.value ? 'tracked' : undefined)
+        },
+      });
+      const convList = res.data.conversations || [];
+      conversations.value = convList;
+      hasMoreConvs.value = convList.length >= 150;
+    } catch (err) {
+      console.error('Failed to fetch conversations:', err);
+    } finally {
+      loadingConvs.value = false;
+    }
+  }
+
+  async function loadMoreConversations(): Promise<boolean> {
+    if (loadingMoreConvs.value || !hasMoreConvs.value) return false;
+    loadingMoreConvs.value = true;
+    try {
+      convPage.value++;
+      const res = await api.get('/conversations', {
+        params: {
+          page: convPage.value,
           limit: 100,
           search: searchQuery.value,
           accountId: accountFilter.value || undefined,
@@ -144,11 +178,22 @@ export function useChat() {
           uncompletedOnly: tasksMode.value ? 'true' : (trackedMode.value ? 'tracked' : undefined)
         },
       });
-      conversations.value = res.data.conversations;
+      const newConvs = res.data.conversations || [];
+      if (newConvs.length > 0) {
+        const existingIds = new Set(conversations.value.map(c => c.id));
+        const filtered = newConvs.filter((c: any) => !existingIds.has(c.id));
+        conversations.value = [...conversations.value, ...filtered];
+        hasMoreConvs.value = newConvs.length >= 100;
+        return true;
+      } else {
+        hasMoreConvs.value = false;
+        return false;
+      }
     } catch (err) {
-      console.error('Failed to fetch conversations:', err);
+      console.error('Failed to load more conversations:', err);
+      return false;
     } finally {
-      loadingConvs.value = false;
+      loadingMoreConvs.value = false;
     }
   }
 
@@ -673,6 +718,8 @@ export function useChat() {
     selectedConv,
     messages,
     loadingConvs,
+    loadingMoreConvs,
+    hasMoreConvs,
     loadingMsgs,
     loadingMoreMsgs,
     hasMoreMessages,
@@ -686,6 +733,7 @@ export function useChat() {
     tasksMode,
     trackedMode,
     fetchConversations,
+    loadMoreConversations,
     selectConversation,
     loadMoreMessages,
     sendMessage,

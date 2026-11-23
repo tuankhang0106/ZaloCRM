@@ -16,6 +16,9 @@
         @action-handled="clearAccountAction"
         :selected-id="selectedConvId"
         :loading="loadingConvs"
+        :loading-more="loadingMoreConvs"
+        :has-more="hasMoreConvs"
+        @load-more="loadMoreConversations"
         v-model:search="searchQuery"
         @select="selectConversation"
         @refresh-conversations="fetchConversations"
@@ -99,9 +102,9 @@ const { mobile } = useDisplay();
 
 const {
   conversations, selectedConvId, selectedConv, messages,
-  loadingConvs, loadingMsgs, loadingMoreMsgs, hasMoreMessages, sendingMsg, searchQuery, accountFilter,
+  loadingConvs, loadingMoreConvs, hasMoreConvs, loadingMsgs, loadingMoreMsgs, hasMoreMessages, sendingMsg, searchQuery, accountFilter,
   tasksMode, trackedMode, unreadMode, categoryFilter, statusFilter, threadTypeFilter,
-  fetchConversations, selectConversation, loadMoreMessages, sendMessage, sendFile,
+  fetchConversations, loadMoreConversations, selectConversation, loadMoreMessages, sendMessage, sendFile,
   initSocket, destroySocket, toggleMute,
 } = useChat();
 

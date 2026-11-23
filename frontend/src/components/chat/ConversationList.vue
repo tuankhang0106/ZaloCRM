@@ -162,7 +162,7 @@
     </div>
 
     <!-- List -->
-    <v-list class="flex-grow-1 overflow-y-auto pa-0" density="compact">
+    <v-list class="flex-grow-1 overflow-y-auto pa-0" density="compact" @scroll="onConvListScroll">
       <v-progress-linear v-if="loading" indeterminate color="primary" />
 
       <!-- Search Zalo by Phone Option -->
@@ -438,6 +438,10 @@
           </div>
         </template>
       </v-list-item>
+
+      <div v-if="loadingMore" class="d-flex justify-center py-3">
+        <v-progress-circular indeterminate size="22" width="2" color="primary" />
+      </div>
 
       <div v-if="!loading && displayConversations.length === 0" class="text-center pa-8 text-grey">
         Chưa có cuộc trò chuyện nào
@@ -783,6 +787,8 @@ const props = defineProps<{
   conversations: Conversation[];
   selectedId: string | null;
   loading: boolean;
+  loadingMore?: boolean;
+  hasMore?: boolean;
   search: string;
   mode?: string;
 }>();
@@ -795,6 +801,7 @@ const emit = defineEmits<{
   'update:search': [value: string];
   'refresh-conversations': [];
   'toggle-mute': [convId: string, isMuted: boolean];
+  'load-more': [];
 }>();
 
 const accountOptions = ref<{ text: string; value: string }[]>([]);
@@ -880,26 +887,30 @@ async function runAccountAction(action?: string) {
 }
 watch(() => props.action, action => { void runAccountAction(action); });
 
+function onConvListScroll(e: Event) {
+  const el = e.target as HTMLElement;
+  if (!el) return;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight <= 150 && props.hasMore && !props.loadingMore) {
+    emit('load-more');
+  }
+}
+
 async function syncRecentMessages() {
   syncingMessages.value = true;
   try {
-    const targetAccounts = selectedAccountId.value
-      ? [selectedAccountId.value]
-      : zaloAccountsList.value.map((a: any) => a.id);
+    const res = await api.get('/zalo-accounts');
+    const accounts = Array.isArray(res.data) ? res.data : res.data.accounts || [];
+    const connected = accounts.filter((a: any) => a.liveStatus === 'connected' || a.status === 'connected');
 
-    if (targetAccounts.length === 0) {
-      // Try fetching accounts if list is empty
-      const res = await api.get('/zalo-accounts');
-      const accounts = Array.isArray(res.data) ? res.data : res.data.accounts || [];
-      const connected = accounts.filter((a: any) => a.liveStatus === 'connected' || a.status === 'connected');
-      if (connected.length > 0) {
-        for (const acc of connected) {
-          await api.post(`/zalo-accounts/${acc.id}/sync-messages`).catch(() => {});
-        }
-      }
-    } else {
-      for (const accId of targetAccounts) {
-        await api.post(`/zalo-accounts/${accId}/sync-messages`).catch(() => {});
+    const targetAccounts = selectedAccountId.value
+      ? connected.filter((a: any) => a.id === selectedAccountId.value)
+      : connected;
+
+    for (const acc of targetAccounts) {
+      if (acc.channel === 'whatsapp') {
+        await api.post(`/whatsapp-accounts/${acc.id}/sync`).catch(() => {});
+      } else {
+        await api.post(`/zalo-accounts/${acc.id}/sync-messages`).catch(() => {});
       }
     }
 
