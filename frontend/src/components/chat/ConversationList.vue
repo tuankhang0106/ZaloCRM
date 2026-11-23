@@ -288,48 +288,35 @@
                     @click.stop
                   />
                 </template>
-                <v-list density="compact" rounded="lg" class="elevation-8 conv-context-menu pa-1" min-width="190">
-                  <!-- 1. Ghim hội thoại -->
+                <v-list density="compact" rounded="lg" class="elevation-8 conv-context-menu pa-1" min-width="200">
+                  <!-- Nhóm 1: Ghim & Đọc -->
                   <v-list-item @click.stop="togglePin(conv.id)" class="conv-menu-item rounded">
+                    <template #prepend>
+                      <v-icon size="17" class="mr-2 text-medium-emphasis">{{ isPinned(conv.id) ? 'mdi-pin-off-outline' : 'mdi-pin-outline' }}</v-icon>
+                    </template>
                     <v-list-item-title class="text-body-2">
                       {{ isPinned(conv.id) ? 'Bỏ ghim hội thoại' : 'Ghim hội thoại' }}
                     </v-list-item-title>
                   </v-list-item>
 
-                  <!-- Đánh dấu: Khách hàng -->
-                  <v-list-item @click.stop="toggleCategory(conv, 'Khách hàng')" class="conv-menu-item rounded d-flex align-center justify-space-between">
-                    <v-list-item-title class="text-body-2 font-weight-medium" style="color: #007A3D;">
-                      Đánh dấu: Khách hàng
-                    </v-list-item-title>
-                    <template #append>
-                      <v-icon v-if="conv.contact?.tags?.includes('Khách hàng')" icon="mdi-check" size="16" color="#007A3D" />
+                  <v-list-item @click.stop="toggleMarkUnread(conv)" class="conv-menu-item rounded">
+                    <template #prepend>
+                      <v-icon size="17" class="mr-2 text-medium-emphasis">{{ conv.unreadCount > 0 ? 'mdi-email-open-outline' : 'mdi-email-mark-as-unread' }}</v-icon>
                     </template>
+                    <v-list-item-title class="text-body-2">
+                      {{ conv.unreadCount > 0 ? 'Đánh dấu đã đọc' : 'Đánh dấu chưa đọc' }}
+                    </v-list-item-title>
                   </v-list-item>
 
-                  <!-- Đánh dấu: Nhà cung cấp -->
-                  <v-list-item @click.stop="toggleCategory(conv, 'Nhà cung cấp')" class="conv-menu-item rounded d-flex align-center justify-space-between">
-                    <v-list-item-title class="text-body-2 font-weight-medium" style="color: #EA580C;">
-                      Đánh dấu: Nhà cung cấp
-                    </v-list-item-title>
-                    <template #append>
-                      <v-icon v-if="conv.contact?.tags?.includes('Nhà cung cấp')" icon="mdi-check" size="16" color="#EA580C" />
-                    </template>
-                  </v-list-item>
+                  <v-divider class="my-1 opacity-20" />
 
-                  <!-- Đánh dấu: Nội bộ -->
-                  <v-list-item @click.stop="toggleCategory(conv, 'Nội bộ công ty')" class="conv-menu-item rounded d-flex align-center justify-space-between">
-                    <v-list-item-title class="text-body-2 font-weight-medium" style="color: #475569;">
-                      Đánh dấu: Nội bộ
-                    </v-list-item-title>
-                    <template #append>
-                      <v-icon v-if="conv.contact?.tags?.includes('Nội bộ công ty') || conv.contact?.tags?.includes('Nội bộ')" icon="mdi-check" size="16" color="#475569" />
-                    </template>
-                  </v-list-item>
-
-                  <!-- 2. Phân loại > -->
+                  <!-- Nhóm 2: Phân loại nhãn & Nhóm -->
                   <v-menu location="end" open-on-hover :close-on-content-click="false">
                     <template #activator="{ props: catMenuProps }">
                       <v-list-item v-bind="catMenuProps" class="conv-menu-item rounded d-flex align-center justify-space-between" @click.stop>
+                        <template #prepend>
+                          <v-icon size="17" class="mr-2 text-primary">mdi-tag-outline</v-icon>
+                        </template>
                         <v-list-item-title class="text-body-2">Phân loại</v-list-item-title>
                         <template #append>
                           <v-icon size="16" class="text-medium-emphasis">mdi-chevron-right</v-icon>
@@ -358,27 +345,30 @@
                       </v-list-item>
                       <v-divider class="my-1 opacity-20" />
                       <v-list-item @click.stop="handleCreateTag" class="conv-menu-item rounded">
-                        <v-list-item-title class="text-body-2 text-primary font-weight-medium">+ Tạo nhãn mới</v-list-item-title>
+                        <template #prepend>
+                          <v-icon size="16" class="mr-2 text-primary">mdi-plus</v-icon>
+                        </template>
+                        <v-list-item-title class="text-body-2 text-primary font-weight-medium">Tạo nhãn mới</v-list-item-title>
                       </v-list-item>
                     </v-list>
                   </v-menu>
 
-                  <!-- 3. Đánh dấu chưa đọc -->
-                  <v-list-item @click.stop="toggleMarkUnread(conv)" class="conv-menu-item rounded">
-                    <v-list-item-title class="text-body-2">
-                      {{ conv.unreadCount > 0 ? 'Đánh dấu đã đọc' : 'Đánh dấu chưa đọc' }}
-                    </v-list-item-title>
-                  </v-list-item>
-
-                  <!-- 4. Thêm vào nhóm -->
                   <v-list-item @click.stop="handleAddToGroup(conv)" class="conv-menu-item rounded">
+                    <template #prepend>
+                      <v-icon size="17" class="mr-2 text-medium-emphasis">mdi-account-multiple-plus-outline</v-icon>
+                    </template>
                     <v-list-item-title class="text-body-2">Thêm vào nhóm</v-list-item-title>
                   </v-list-item>
 
-                  <!-- 5. Tắt thông báo > -->
+                  <v-divider class="my-1 opacity-20" />
+
+                  <!-- Nhóm 3: Thông báo & Quyền riêng tư -->
                   <v-menu v-if="!conv.isMuted" location="end" open-on-hover :close-on-content-click="true">
                     <template #activator="{ props: muteMenuProps }">
                       <v-list-item v-bind="muteMenuProps" class="conv-menu-item rounded d-flex align-center justify-space-between" @click.stop>
+                        <template #prepend>
+                          <v-icon size="17" class="mr-2 text-medium-emphasis">mdi-bell-off-outline</v-icon>
+                        </template>
                         <v-list-item-title class="text-body-2">Tắt thông báo</v-list-item-title>
                         <template #append>
                           <v-icon size="16" class="text-medium-emphasis">mdi-chevron-right</v-icon>
@@ -401,24 +391,34 @@
                     </v-list>
                   </v-menu>
                   <v-list-item v-else @click.stop="unmuteConversation(conv)" class="conv-menu-item rounded">
+                    <template #prepend>
+                      <v-icon size="17" class="mr-2 text-warning">mdi-bell-outline</v-icon>
+                    </template>
                     <v-list-item-title class="text-body-2">Bật thông báo</v-list-item-title>
                   </v-list-item>
 
-                  <!-- 6. Ẩn trò chuyện -->
                   <v-list-item @click.stop="confirmHideConversation(conv)" class="conv-menu-item rounded">
+                    <template #prepend>
+                      <v-icon size="17" class="mr-2 text-medium-emphasis">mdi-eye-off-outline</v-icon>
+                    </template>
                     <v-list-item-title class="text-body-2">Ẩn trò chuyện</v-list-item-title>
                   </v-list-item>
 
                   <v-divider class="my-1 opacity-20" />
 
-                  <!-- 7. Xóa hội thoại (màu đỏ) -->
-                  <v-list-item @click.stop="confirmDeleteConversation(conv)" class="conv-menu-item rounded text-error">
-                    <v-list-item-title class="text-body-2 text-error font-weight-medium">Xóa hội thoại</v-list-item-title>
+                  <!-- Nhóm 4: Báo xấu & Xóa -->
+                  <v-list-item @click.stop="openReportDialog(conv)" class="conv-menu-item rounded">
+                    <template #prepend>
+                      <v-icon size="17" class="mr-2 text-medium-emphasis">mdi-alert-octagon-outline</v-icon>
+                    </template>
+                    <v-list-item-title class="text-body-2">Báo xấu</v-list-item-title>
                   </v-list-item>
 
-                  <!-- 8. Báo xấu -->
-                  <v-list-item @click.stop="openReportDialog(conv)" class="conv-menu-item rounded">
-                    <v-list-item-title class="text-body-2">Báo xấu</v-list-item-title>
+                  <v-list-item @click.stop="confirmDeleteConversation(conv)" class="conv-menu-item rounded text-error">
+                    <template #prepend>
+                      <v-icon size="17" class="mr-2 text-error">mdi-delete-outline</v-icon>
+                    </template>
+                    <v-list-item-title class="text-body-2 text-error font-weight-medium">Xóa hội thoại</v-list-item-title>
                   </v-list-item>
                 </v-list>
               </v-menu>
