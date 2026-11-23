@@ -701,7 +701,23 @@
                     🏷️ Sticker
                   </div>
                 </div>
-                <div v-else-if="msg.contentType === 'video'">🎥 Video</div>
+                <!-- Video message player -->
+                <div v-else-if="msg.contentType === 'video' || getVideoUrl(msg)" class="chat-video-wrapper my-1">
+                  <video
+                    v-if="getVideoUrl(msg)"
+                    :src="getVideoUrl(msg)!"
+                    controls
+                    preload="metadata"
+                    class="chat-video-player rounded-lg"
+                    style="max-width: 100%; max-height: 360px; display: block;"
+                  ></video>
+                  <div v-else class="text-caption text-medium-emphasis d-flex align-center pa-2">
+                    🎥 Video
+                  </div>
+                  <div v-if="getVideoCaption(msg)" class="chat-image-caption mt-2">
+                    {{ getVideoCaption(msg) }}
+                  </div>
+                </div>
                 <div v-else-if="msg.contentType === 'gif'">GIF</div>
 
                 <!-- Reminder/Calendar -->
@@ -2695,8 +2711,8 @@ function openFile(url: string) {
 
 /** Extract image URL from JSON content */
 function getImageUrl(msg: Message): string | null {
-  // Voice, call, and file must NEVER be treated as images!
-  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file') {
+  // Voice, call, file, and video must NEVER be treated as images!
+  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file' || msg.contentType === 'video') {
     return null;
   }
   if (getVoiceInfo(msg) !== null) {
@@ -2739,7 +2755,7 @@ function getImageUrl(msg: Message): string | null {
 }
 
 function getImageThumbUrl(msg: Message): string | null {
-  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file') return null;
+  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file' || msg.contentType === 'video') return null;
   if (getVoiceInfo(msg) !== null) return null;
   if (typeof msg.content === 'string') {
     const trimmed = msg.content.trim();
@@ -2772,7 +2788,7 @@ function getImageThumbUrl(msg: Message): string | null {
 }
 
 function getImageHdUrl(msg: Message): string | null {
-  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file') return null;
+  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file' || msg.contentType === 'video') return null;
   if (getVoiceInfo(msg) !== null) return null;
   if (typeof msg.content === 'string') {
     const trimmed = msg.content.trim();
@@ -2877,6 +2893,55 @@ function getImageCaption(msg: Message): string | null {
     if (typeof caption === 'string' && caption.trim()) {
       return caption.trim();
     }
+  } catch {}
+  return null;
+}
+
+function getVideoUrl(msg: Message): string | null {
+  if (msg.contentType === 'voice' || msg.contentType === 'call' || msg.contentType === 'file') {
+    return null;
+  }
+  // 1. Direct video URL / path
+  if (typeof msg.content === 'string') {
+    const trimmed = msg.content.trim();
+    if (trimmed.startsWith('/') || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (/\.(mp4|mov|webm|avi|mkv)/i.test(trimmed)) {
+        return trimmed;
+      }
+    }
+  }
+  // 2. JSON content with videoUrl, href, or fileUrl
+  if (msg.content?.startsWith('{')) {
+    try {
+      const p = JSON.parse(msg.content);
+      const vUrl = p.videoUrl || p.href || p.fileUrl || p.url || p.normalUrl || null;
+      if (vUrl && (vUrl.startsWith('http') || vUrl.startsWith('/'))) {
+        if (msg.contentType === 'video' || p.type === 'video' || /\.(mp4|mov|webm|avi|mkv)/i.test(vUrl)) {
+          return vUrl;
+        }
+      }
+    } catch {}
+  }
+  // 3. Attachments
+  if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+    const firstAtt: any = msg.attachments[0];
+    const aUrl = firstAtt?.fileUrl || firstAtt?.url || firstAtt?.normalUrl || firstAtt?.href || null;
+    if (aUrl && (msg.contentType === 'video' || /\.(mp4|mov|webm|avi|mkv)/i.test(aUrl))) {
+      return aUrl;
+    }
+  }
+  // 4. If contentType is explicitly video and content is a URL
+  if (msg.contentType === 'video' && msg.content) {
+    if (msg.content.startsWith('http') || msg.content.startsWith('/')) return msg.content;
+  }
+  return null;
+}
+
+function getVideoCaption(msg: Message): string | null {
+  if (!msg.content || !msg.content.startsWith('{')) return null;
+  try {
+    const p = JSON.parse(msg.content);
+    return p.caption || p.title || null;
   } catch {}
   return null;
 }
@@ -3713,6 +3778,21 @@ async function toggleGroupTracking() {
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
 }
 .chat-image:hover { transform: scale(1.02); }
+
+.chat-video-wrapper {
+  max-width: 360px;
+  width: 100%;
+}
+.chat-video-player {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  width: 100%;
+  border-radius: 12px;
+  background: #000;
+  outline: none;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15);
+}
 
 /* Bỏ viền màu xanh lá & background cho ảnh phía mình gửi */
 .message-bubble.image-bubble,

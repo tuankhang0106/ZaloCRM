@@ -20,6 +20,75 @@ import type { Server } from 'socket.io';
 
 type QueryParams = Record<string, string>;
 
+function detectMediaFormat(buffer: Buffer, fallbackName?: string): { ext: string; mime: string; isVideo: boolean; isImage: boolean } {
+  const fallbackExt = fallbackName ? path.extname(fallbackName).toLowerCase().replace(/^\./, '') : '';
+  if (buffer.length >= 8) {
+    // PNG: 89 50 4E 47
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+      return { ext: 'png', mime: 'image/png', isVideo: false, isImage: true };
+    }
+    // GIF: 47 49 46 38
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) {
+      return { ext: 'gif', mime: 'image/gif', isVideo: false, isImage: true };
+    }
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+      return { ext: 'jpg', mime: 'image/jpeg', isVideo: false, isImage: true };
+    }
+    // WebP: RIFF ... WEBP
+    if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') {
+      return { ext: 'webp', mime: 'image/webp', isVideo: false, isImage: true };
+    }
+    // MP4 / MOV: box type 'ftyp' or 'moov'
+    const boxType = buffer.subarray(4, 8).toString('ascii');
+    if (boxType === 'ftyp' || boxType === 'moov') {
+      const isMov = fallbackExt === 'mov';
+      return { ext: isMov ? 'mov' : 'mp4', mime: isMov ? 'video/quicktime' : 'video/mp4', isVideo: true, isImage: false };
+    }
+    // WebM / Matroska: 1A 45 DF A3
+    if (buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3) {
+      return { ext: 'webm', mime: 'video/webm', isVideo: true, isImage: false };
+    }
+  }
+
+  if (['png', 'webp', 'gif', 'bmp', 'svg'].includes(fallbackExt)) {
+    return { ext: fallbackExt, mime: `image/${fallbackExt === 'svg' ? 'svg+xml' : fallbackExt}`, isVideo: false, isImage: true };
+  }
+  if (['jpg', 'jpeg'].includes(fallbackExt)) {
+    return { ext: 'jpg', mime: 'image/jpeg', isVideo: false, isImage: true };
+  }
+  if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(fallbackExt)) {
+    return {
+      ext: fallbackExt,
+      mime: fallbackExt === 'mov' ? 'video/quicktime' : fallbackExt === 'webm' ? 'video/webm' : 'video/mp4',
+      isVideo: true,
+      isImage: false,
+    };
+  }
+
+  return { ext: 'jpg', mime: 'image/jpeg', isVideo: false, isImage: true };
+}
+
+function getJpegDimensions(buf: Buffer): { width: number; height: number } | null {
+  let offset = 2;
+  while (offset < buf.length - 8) {
+    if (buf[offset] !== 0xff) {
+      offset++;
+      continue;
+    }
+    const marker = buf[offset + 1];
+    if (marker >= 0xc0 && marker <= 0xc3) {
+      return {
+        height: buf.readUInt16BE(offset + 5),
+        width: buf.readUInt16BE(offset + 7),
+      };
+    }
+    const len = buf.readUInt16BE(offset + 2);
+    offset += 2 + len;
+  }
+  return null;
+}
+
 export async function chatRoutes(app: FastifyInstance) {
   // ── Proxy file downloads from Zalo file servers ───────────────────────────
   // Registered BEFORE authMiddleware hook to allow direct browser GET requests (via window.open)
@@ -1275,7 +1344,9 @@ export async function chatRoutes(app: FastifyInstance) {
         const targetThreadType = targetConv.threadType === 'group' ? 1 : 0;
 
         const isImage = sourceMessage.contentType === 'image';
-        const isFile = sourceMessage.contentType === 'file';
+        const isVideo = sourceMessage.contentType === 'video' ||
+          (sourceMessage.content && (sourceMessage.content.includes('"videoUrl"') || sourceMessage.content.includes('.mp4')));
+        const isFile = !isVideo && sourceMessage.contentType === 'file';
         const forwardAttachment = {
           type: 'forwarded',
           originalSender: sourceMessage.senderName || 'Người dùng',
@@ -1285,15 +1356,26 @@ export async function chatRoutes(app: FastifyInstance) {
 
         if (isImage) {
           let imageUrl = '';
-          if (sourceMessage.content?.startsWith('http')) {
+          let imageTitle = '';
+          if (sourceMessage.content?.startsWith('http') || sourceMessage.content?.startsWith('/')) {
             imageUrl = sourceMessage.content;
           } else if (sourceMessage.content?.startsWith('{')) {
             try {
               const p = JSON.parse(sourceMessage.content);
               imageUrl = p.hdUrl || p.normalUrl || p.href || p.thumb || p.fileUrl || '';
+              imageTitle = p.title || p.fileName || p.name || '';
             } catch {}
           } else {
             imageUrl = sourceMessage.content || '';
+          }
+
+          if (!imageTitle && imageUrl) {
+            try {
+              const parsedName = path.basename(new URL(imageUrl, 'http://localhost').pathname);
+              if (parsedName && !parsedName.startsWith('chat_') && parsedName.includes('.')) {
+                imageTitle = parsedName;
+              }
+            } catch {}
           }
 
           let imgBuffer: Buffer | null = null;
@@ -1344,6 +1426,28 @@ export async function chatRoutes(app: FastifyInstance) {
           }
 
           if (imgBuffer) {
+            const mediaFormat = detectMediaFormat(imgBuffer, imageTitle || imageUrl);
+            let imgWidth = 800;
+            let imgHeight = 600;
+
+            if (mediaFormat.ext === 'png' && imgBuffer.length >= 24) {
+              imgWidth = imgBuffer.readUInt32BE(16) || 800;
+              imgHeight = imgBuffer.readUInt32BE(20) || 600;
+            } else if (mediaFormat.ext === 'gif' && imgBuffer.length >= 10) {
+              imgWidth = imgBuffer.readUInt16LE(6) || 800;
+              imgHeight = imgBuffer.readUInt16LE(8) || 600;
+            } else if (mediaFormat.ext === 'jpg') {
+              const dims = getJpegDimensions(imgBuffer);
+              if (dims) {
+                imgWidth = dims.width;
+                imgHeight = dims.height;
+              }
+            }
+
+            const finalFileName = imageTitle ?
+              (imageTitle.toLowerCase().endsWith(`.${mediaFormat.ext}`) ? imageTitle : `${path.parse(imageTitle).name}.${mediaFormat.ext}`) :
+              `forwarded_image_${Date.now()}.${mediaFormat.ext}`;
+
             let zaloMsgId: string | null = null;
             let finalContent = sourceMessage.content || '';
             const attList: any[] = [forwardAttachment];
@@ -1353,8 +1457,8 @@ export async function chatRoutes(app: FastifyInstance) {
                 targetConv.zaloAccountId,
                 targetThreadId,
                 imgBuffer,
-                'forwarded_image.jpg',
-                'image/jpeg',
+                finalFileName,
+                mediaFormat.mime,
                 extraText ? extraText.trim() : undefined
               );
               zaloMsgId = sent?.id || null;
@@ -1362,16 +1466,17 @@ export async function chatRoutes(app: FastifyInstance) {
                 href: imageUrl,
                 thumb: imageUrl,
                 hdUrl: imageUrl,
+                title: finalFileName,
                 ...(extraText?.trim() ? { title: extraText.trim(), caption: extraText.trim() } : {}),
               });
             } else {
               const attachmentSource: any = {
                 data: imgBuffer,
-                filename: 'forwarded_image.jpg',
+                filename: finalFileName,
                 metadata: {
                   totalSize: imgBuffer.length,
-                  width: 800,
-                  height: 600,
+                  width: imgWidth,
+                  height: imgHeight,
                 },
               };
 
@@ -1388,6 +1493,7 @@ export async function chatRoutes(app: FastifyInstance) {
                   href: att.normalUrl || att.fileUrl || imageUrl,
                   thumb: att.thumbUrl || att.fileUrl || imageUrl,
                   hdUrl: att.hdUrl || att.fileUrl || imageUrl,
+                  title: att.fileName || finalFileName,
                   ...(extraText?.trim() ? { title: extraText.trim(), caption: extraText.trim() } : {}),
                 });
               } else {
@@ -1395,6 +1501,7 @@ export async function chatRoutes(app: FastifyInstance) {
                   href: imageUrl,
                   thumb: imageUrl,
                   hdUrl: imageUrl,
+                  title: finalFileName,
                   ...(extraText?.trim() ? { title: extraText.trim(), caption: extraText.trim() } : {}),
                 });
               }
@@ -1430,6 +1537,199 @@ export async function chatRoutes(app: FastifyInstance) {
             results.push(newMsg);
           } else {
             const textContent = `${imageUrl || '[Hình ảnh]'}${extraText ? `\n${extraText}` : ''}`;
+            let zaloMsgId: string | null = null;
+            if (isTargetWhatsApp) {
+              const sent = await whatsappPool.sendMessage(targetConv.zaloAccountId, targetThreadId, textContent);
+              zaloMsgId = sent?.id || null;
+            } else {
+              const sendRes = await zaloInstance.api.sendMessage({ msg: textContent }, targetThreadId, targetThreadType);
+              zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
+            }
+            const newMsg = await prisma.message.create({
+              data: {
+                id: randomUUID(),
+                conversationId: targetId,
+                zaloMsgId,
+                senderType: 'self',
+                senderUid: targetConv.zaloAccount.zaloUid || '',
+                senderName: 'Staff',
+                content: textContent,
+                contentType: 'text',
+                attachments: [forwardAttachment],
+                sentAt: new Date(),
+                repliedByUserId: user.id,
+              },
+              include: {
+                repliedBy: { select: { id: true, fullName: true, role: true } },
+              },
+            });
+
+            await prisma.conversation.update({
+              where: { id: targetId },
+              data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+            });
+
+            io?.emit('chat:message', { accountId: targetConv.zaloAccountId, message: newMsg, conversationId: targetId });
+            results.push(newMsg);
+          }
+        } else if (isVideo) {
+          let videoUrl = '';
+          let videoTitle = 'forwarded_video.mp4';
+          if (sourceMessage.content?.startsWith('{')) {
+            try {
+              const p = JSON.parse(sourceMessage.content);
+              videoUrl = p.videoUrl || p.href || p.fileUrl || p.url || p.normalUrl || '';
+              videoTitle = p.title || p.fileName || p.name || 'forwarded_video.mp4';
+            } catch {}
+          } else if (sourceMessage.content?.startsWith('http') || sourceMessage.content?.startsWith('/')) {
+            videoUrl = sourceMessage.content;
+          }
+
+          if (!videoUrl && Array.isArray(sourceMessage.attachments) && sourceMessage.attachments.length > 0) {
+            const firstAtt: any = sourceMessage.attachments[0];
+            videoUrl = firstAtt?.fileUrl || firstAtt?.url || firstAtt?.normalUrl || firstAtt?.href || '';
+            if (firstAtt?.fileName || firstAtt?.title) videoTitle = firstAtt.fileName || firstAtt.title;
+          }
+
+          let vidBuffer: Buffer | null = null;
+          if (videoUrl) {
+            try {
+              const isLocal = videoUrl.startsWith('/uploads/') || videoUrl.startsWith('/api/zalo-assets/') || (!videoUrl.startsWith('http://') && !videoUrl.startsWith('https://'));
+              if (isLocal) {
+                let relPath = videoUrl;
+                if (relPath.startsWith('/api/zalo-assets/')) {
+                  relPath = relPath.slice('/api/zalo-assets/'.length);
+                } else if (relPath.startsWith('/uploads/')) {
+                  relPath = relPath.slice('/uploads/'.length);
+                }
+                const uploadRoot = path.resolve(config.uploadDir);
+                const localFilePath = path.join(uploadRoot, relPath);
+                if (fs.existsSync(localFilePath)) {
+                  vidBuffer = await fs.promises.readFile(localFilePath);
+                } else {
+                  const mediaPath = path.join(uploadRoot, 'media', path.basename(relPath));
+                  if (fs.existsSync(mediaPath)) {
+                    vidBuffer = await fs.promises.readFile(mediaPath);
+                  }
+                }
+              }
+
+              if (!vidBuffer && (videoUrl.startsWith('http://') || videoUrl.startsWith('https://'))) {
+                const sourceInstance = zaloPool.getInstance(sourceMessage.conversation.zaloAccountId);
+                const headers: Record<string, string> = {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                };
+                if (sourceInstance?.api) {
+                  try {
+                    const ctx = sourceInstance.api.getContext();
+                    const cookie = await ctx.cookie.getCookieString(videoUrl);
+                    if (cookie) headers['Cookie'] = cookie;
+                  } catch {}
+                }
+                const vidRes = await fetch(videoUrl, { headers });
+                if (vidRes.ok) {
+                  vidBuffer = Buffer.from(await vidRes.arrayBuffer());
+                }
+              }
+            } catch (vErr) {
+              logger.error('[chat-forward] Error loading video:', vErr);
+            }
+          }
+
+          if (vidBuffer) {
+            const mediaFormat = detectMediaFormat(vidBuffer, videoTitle);
+            const finalFileName = videoTitle.endsWith(`.${mediaFormat.ext}`) ? videoTitle : `${path.parse(videoTitle).name || 'video'}.${mediaFormat.ext}`;
+            let zaloMsgId: string | null = null;
+            let finalContent = '';
+            const attList: any[] = [forwardAttachment];
+
+            if (isTargetWhatsApp) {
+              const sent = await whatsappPool.sendMedia(
+                targetConv.zaloAccountId,
+                targetThreadId,
+                vidBuffer,
+                finalFileName,
+                mediaFormat.mime,
+                extraText ? extraText.trim() : undefined
+              );
+              zaloMsgId = sent?.id || null;
+              finalContent = JSON.stringify({
+                videoUrl,
+                href: videoUrl,
+                title: finalFileName,
+                type: 'video',
+                size: vidBuffer.length,
+                ...(extraText?.trim() ? { caption: extraText.trim() } : {}),
+              });
+            } else {
+              const attachmentSource: any = {
+                data: vidBuffer,
+                filename: finalFileName,
+                metadata: {
+                  totalSize: vidBuffer.length,
+                },
+              };
+
+              const sendRes = await zaloInstance.api.sendMessage(
+                { msg: extraText ? extraText.trim() : '', attachments: [attachmentSource] },
+                targetThreadId,
+                targetThreadType
+              );
+
+              if (sendRes?.attachment && sendRes.attachment.length > 0) {
+                const att = sendRes.attachment[0];
+                attList.unshift(att);
+                const remoteUrl = att.normalUrl || att.fileUrl || att.url || videoUrl;
+                finalContent = JSON.stringify({
+                  videoUrl: remoteUrl,
+                  href: remoteUrl,
+                  title: att.fileName || finalFileName,
+                  type: 'video',
+                  size: att.totalSize || vidBuffer.length,
+                  ...(extraText?.trim() ? { caption: extraText.trim() } : {}),
+                });
+              } else {
+                finalContent = JSON.stringify({
+                  videoUrl,
+                  href: videoUrl,
+                  title: finalFileName,
+                  type: 'video',
+                  size: vidBuffer.length,
+                  ...(extraText?.trim() ? { caption: extraText.trim() } : {}),
+                });
+              }
+
+              zaloMsgId = sendRes?.messageId || sendRes?.msgId || sendRes?.id || null;
+            }
+
+            const newMsg = await prisma.message.create({
+              data: {
+                id: randomUUID(),
+                conversationId: targetId,
+                zaloMsgId,
+                senderType: 'self',
+                senderUid: targetConv.zaloAccount.zaloUid || '',
+                senderName: 'Staff',
+                content: finalContent,
+                contentType: 'video',
+                attachments: attList,
+                sentAt: new Date(),
+                repliedByUserId: user.id,
+              },
+              include: {
+                repliedBy: { select: { id: true, fullName: true, role: true } },
+              },
+            });
+
+            await prisma.conversation.update({
+              where: { id: targetId },
+              data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+            });
+
+            io?.emit('chat:message', { accountId: targetConv.zaloAccountId, message: newMsg, conversationId: targetId });
+            results.push(newMsg);
+          } else {
+            const textContent = `${videoUrl || '[Video]'}${extraText ? `\n${extraText}` : ''}`;
             let zaloMsgId: string | null = null;
             if (isTargetWhatsApp) {
               const sent = await whatsappPool.sendMessage(targetConv.zaloAccountId, targetThreadId, textContent);
